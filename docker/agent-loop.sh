@@ -58,7 +58,14 @@ setup_workspace() {
         echo "[$AGENT_ID] Fetching latest changes"
         cd "$WORKSPACE"
         git fetch origin
-        git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || true
+        # Reset to current branch's remote tracking, not hard-coded main
+        local current_branch
+        current_branch=$(git branch --show-current 2>/dev/null || echo "")
+        if [ -n "$current_branch" ]; then
+            git reset --hard "origin/$current_branch" 2>/dev/null || true
+        else
+            git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || true
+        fi
     else
         echo "[$AGENT_ID] Cloning bare repo into workspace"
         git clone "$REPO_PATH" "$WORKSPACE"
@@ -111,11 +118,11 @@ checkout_prd_branch() {
 claim_story() {
     cd "$WORKSPACE"
 
-    # Pull latest prd.json
-    git pull --rebase 2>&1 || {
-        git rebase --abort 2>/dev/null || true
-        git fetch origin
-        git reset --hard "origin/$(git branch --show-current)"
+    # Pull latest prd.json (all git output to stderr to keep stdout clean for return value)
+    git pull --rebase >&2 2>&1 || {
+        git rebase --abort >/dev/null 2>&1 || true
+        git fetch origin >&2 2>&1
+        git reset --hard "origin/$(git branch --show-current)" >&2 2>&1
     }
 
     if [ ! -f prd.json ]; then
@@ -150,24 +157,24 @@ claim_story() {
         )
     ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
 
-    git add prd.json
-    git commit -m "[$AGENT_ID] Claim: $story_id" 2>&1 || {
+    git add prd.json >&2 2>&1
+    git commit -m "[$AGENT_ID] Claim: $story_id" >&2 2>&1 || {
         echo "[$AGENT_ID] Failed to commit claim for $story_id" >&2
-        git checkout -- prd.json 2>/dev/null || true
+        git checkout -- prd.json >/dev/null 2>&1 || true
         return 1
     }
 
     # Atomic push — if this fails, another agent claimed something concurrently
-    if git push 2>&1; then
+    if git push >&2 2>&1; then
         echo "$story_id"
         return 0
     else
         echo "[$AGENT_ID] Push failed (concurrent claim). Resetting and retrying..." >&2
-        git reset --hard HEAD~1
-        git pull --rebase 2>&1 || {
-            git rebase --abort 2>/dev/null || true
-            git fetch origin
-            git reset --hard "origin/$(git branch --show-current)"
+        git reset --hard HEAD~1 >&2 2>&1
+        git pull --rebase >&2 2>&1 || {
+            git rebase --abort >/dev/null 2>&1 || true
+            git fetch origin >&2 2>&1
+            git reset --hard "origin/$(git branch --show-current)" >&2 2>&1
         }
         return 1
     fi
@@ -259,9 +266,14 @@ while true; do
     CLAIMED_STORY=""
     CLAIM_ATTEMPTS=0
     while [ $CLAIM_ATTEMPTS -lt 3 ] && [ -z "$CLAIMED_STORY" ]; do
-        CLAIMED_STORY=$(claim_story) && break || true
-        CLAIM_ATTEMPTS=$((CLAIM_ATTEMPTS + 1))
-        sleep 2
+        # Use if to prevent set -e from killing the script on claim failure
+        if CLAIMED_STORY=$(claim_story); then
+            break
+        else
+            CLAIMED_STORY=""
+            CLAIM_ATTEMPTS=$((CLAIM_ATTEMPTS + 1))
+            sleep 2
+        fi
     done
 
     if [ -z "$CLAIMED_STORY" ]; then
