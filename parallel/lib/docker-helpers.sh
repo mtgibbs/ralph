@@ -8,9 +8,14 @@ CLAUDE_AUTH_VOLUME="ralph-claude-auth"
 
 build_image() {
     local docker_dir="$1"
+    local dockerfile="${2:-}"
 
     log_info "Building Ralph agent image..."
-    docker build -t "$RALPH_IMAGE" "$docker_dir"
+    if [ -n "$dockerfile" ]; then
+        docker build -t "$RALPH_IMAGE" -f "$dockerfile" "$docker_dir"
+    else
+        docker build -t "$RALPH_IMAGE" "$docker_dir"
+    fi
     log_info "Image built: $RALPH_IMAGE"
 }
 

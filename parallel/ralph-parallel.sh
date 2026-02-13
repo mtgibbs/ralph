@@ -197,14 +197,30 @@ fi
 echo ""
 
 # --- Step 1: Build or verify Docker image ---
+PROJECT_DOCKERFILE="$PROJECT_DIR/Dockerfile.ralph"
+
 if [ -n "$CUSTOM_IMAGE" ]; then
-    # User specified a custom image — use it, don't auto-build
+    # Explicit --image flag takes priority
     export RALPH_IMAGE="$CUSTOM_IMAGE"
     log_info "Using custom image: $RALPH_IMAGE"
     if ! docker image inspect "$RALPH_IMAGE" &> /dev/null; then
         log_error "Custom image '$RALPH_IMAGE' not found. Build it first."
         exit 1
     fi
+elif [ -f "$PROJECT_DOCKERFILE" ]; then
+    # Project has a Dockerfile.ralph — build a project-specific image
+    # Tag includes project name to avoid collisions between projects
+    PROJECT_IMAGE_TAG="ralph-agent-${PROJECT_NAME}:latest"
+    export RALPH_IMAGE="$PROJECT_IMAGE_TAG"
+    log_info "Found Dockerfile.ralph — building project image: $RALPH_IMAGE"
+
+    # Always ensure the base image exists first
+    if ! docker image inspect "ralph-agent:latest" &> /dev/null; then
+        log_info "Building base image first..."
+        build_image "$RALPH_ROOT/docker"
+    fi
+
+    build_image "$PROJECT_DIR" "$PROJECT_DOCKERFILE"
 else
     log_info "Checking Docker image..."
     if ! docker image inspect "$RALPH_IMAGE" &> /dev/null; then

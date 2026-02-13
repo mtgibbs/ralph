@@ -118,18 +118,38 @@ Use `--allow-domain` to whitelist package registries your project needs:
 
 The default `ralph-agent:latest` image is based on `node:20-slim` (Node.js is required for Claude Code). If your project needs additional runtimes (Python, Go, Rust, etc.), extend the base image.
 
+### `Dockerfile.ralph` Convention
+
+The easiest way to make a project "ralph-ready" is to add a `Dockerfile.ralph` to the project root. When ralph detects this file, it automatically builds a project-specific image — no `--image` flag needed.
+
+```
+my-project/
+├── Dockerfile.ralph    # <-- ralph auto-detects this
+├── prd.json
+├── src/
+└── ...
+```
+
+```bash
+# Ralph sees Dockerfile.ralph and builds automatically
+./parallel/ralph-parallel.sh --project /path/to/my-project --agents 3
+```
+
+The image is tagged `ralph-agent-<project-name>:latest` (derived from `prd.json`'s `project` field) so multiple projects don't collide.
+
 ### Image Contract
 
-When extending `ralph-agent:latest`, you **must**:
+`Dockerfile.ralph` should extend `ralph-agent:latest`. When doing so, you **must**:
 
 - Preserve the `agent` user (UID 1001) — do not delete or change its UID
 - Keep the `/opt/ralph/` scripts intact — do not remove or modify them
 - Keep the default `ENTRYPOINT` (`/opt/ralph/agent-loop.sh`)
 - Switch back to `USER agent` after installing system packages
 
-### Example: Adding Python
+### Example: Python Project
 
 ```dockerfile
+# Dockerfile.ralph
 FROM ralph-agent:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -138,9 +158,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 USER agent
 ```
 
-### Example: Adding Go
+### Example: Go Project
 
 ```dockerfile
+# Dockerfile.ralph
 FROM ralph-agent:latest
 USER root
 RUN curl -fsSL https://go.dev/dl/go1.22.0.linux-$(dpkg --print-architecture).tar.gz \
@@ -149,19 +170,11 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 USER agent
 ```
 
-### Using a Custom Image
+### Image Resolution Order
 
-Build your extended image, then pass it with `--image`:
-
-```bash
-docker build -t my-project-agent:latest -f Dockerfile.myproject .
-
-./parallel/ralph-parallel.sh \
-  --project /path/to/project \
-  --image my-project-agent:latest \
-  --allow-domain pypi.org \
-  --agents 3
-```
+1. `--image IMAGE` flag — explicit override, used as-is
+2. `Dockerfile.ralph` in the project directory — auto-built
+3. Default `ralph-agent:latest` — base image with Node.js only
 
 ## File Layout
 
