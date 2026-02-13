@@ -78,6 +78,7 @@ setup_git_identity() {
     git config user.name "$AGENT_ID"
     git config user.email "${AGENT_ID}@ralph-agent.local"
     git config pull.rebase true
+    git config push.autoSetupRemote true
 }
 
 # --- Step 5: Check out the correct branch from prd.json ---
@@ -119,11 +120,16 @@ claim_story() {
     cd "$WORKSPACE"
 
     # Pull latest prd.json (all git output to stderr to keep stdout clean for return value)
-    git pull --rebase >&2 2>&1 || {
-        git rebase --abort >/dev/null 2>&1 || true
-        git fetch origin >&2 2>&1
-        git reset --hard "origin/$(git branch --show-current)" >&2 2>&1
-    }
+    # On a new branch with no remote tracking yet, pull will fail — that's fine, we continue
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
+        git pull --rebase >&2 2>&1 || {
+            git rebase --abort >/dev/null 2>&1 || true
+            git fetch origin >&2 2>&1
+            git reset --hard "origin/$current_branch" >&2 2>&1
+        }
+    fi
 
     if [ ! -f prd.json ]; then
         echo "[$AGENT_ID] No prd.json found" >&2
@@ -171,11 +177,15 @@ claim_story() {
     else
         echo "[$AGENT_ID] Push failed (concurrent claim). Resetting and retrying..." >&2
         git reset --hard HEAD~1 >&2 2>&1
-        git pull --rebase >&2 2>&1 || {
-            git rebase --abort >/dev/null 2>&1 || true
-            git fetch origin >&2 2>&1
-            git reset --hard "origin/$(git branch --show-current)" >&2 2>&1
-        }
+        local retry_branch
+        retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
+            git pull --rebase >&2 2>&1 || {
+                git rebase --abort >/dev/null 2>&1 || true
+                git fetch origin >&2 2>&1
+                git reset --hard "origin/$retry_branch" >&2 2>&1
+            }
+        fi
         return 1
     fi
 }

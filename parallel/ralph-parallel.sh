@@ -232,7 +232,7 @@ BARE_REPO="$PROJECT_DIR/.ralph/repo.git"
 if [ ! -d "$BARE_REPO" ]; then
     log_info "Creating bare repo for agent coordination..."
     mkdir -p "$PROJECT_DIR/.ralph"
-    git clone --bare --filter=blob:none "$PROJECT_DIR" "$BARE_REPO"
+    git clone --bare --filter=blob:none "file://$PROJECT_DIR" "$BARE_REPO"
     log_info "Bare repo created at $BARE_REPO"
 else
     # Update the bare repo from the working directory
