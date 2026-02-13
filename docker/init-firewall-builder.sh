@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 #
-# Builder firewall: whitelist only Claude API, Statsig, and npm registry.
+# Builder firewall: whitelist only Claude API and user-specified domains.
 # Everything else is denied. Must run as root (called via sudo).
+#
+# Extra domains are passed via the RALPH_EXTRA_DOMAINS env var (comma-separated).
 #
 
 # Flush existing rules
@@ -21,15 +23,23 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-# Resolve and allow each whitelisted domain
+# Always-allowed domains (Claude Code needs these)
 ALLOWED_DOMAINS=(
     "api.anthropic.com"
     "statsig.anthropic.com"
-    "registry.npmjs.org"
-    "jsr.io"
-    "deno.land"
 )
 
+# Append user-specified domains from RALPH_EXTRA_DOMAINS env var
+if [ -n "${RALPH_EXTRA_DOMAINS:-}" ]; then
+    IFS=',' read -ra extra <<< "$RALPH_EXTRA_DOMAINS"
+    for domain in "${extra[@]}"; do
+        # Trim whitespace
+        domain=$(echo "$domain" | xargs)
+        [ -n "$domain" ] && ALLOWED_DOMAINS+=("$domain")
+    done
+fi
+
+# Resolve and allow each whitelisted domain
 for domain in "${ALLOWED_DOMAINS[@]}"; do
     # Resolve all IPs for the domain
     ips=$(dig +short "$domain" 2>/dev/null | grep -E '^[0-9]+\.' || true)
@@ -52,4 +62,4 @@ done
 # Default deny all other outbound traffic
 iptables -A OUTPUT -j DROP
 
-echo "[firewall] Builder firewall initialized. Only API + npm registry allowed."
+echo "[firewall] Builder firewall initialized. Allowed domains: ${ALLOWED_DOMAINS[*]}"

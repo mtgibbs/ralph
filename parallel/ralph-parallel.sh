@@ -38,6 +38,7 @@ MAX_ITERATIONS=0
 STALE_CLAIM_MINUTES=30
 PROJECT_DIR=""
 CUSTOM_IMAGE=""
+declare -a EXTRA_DOMAINS=()
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -98,6 +99,14 @@ while [[ $# -gt 0 ]]; do
             CONTAINER_CPUS="${1#*=}"
             shift
             ;;
+        --allow-domain)
+            EXTRA_DOMAINS+=("$2")
+            shift 2
+            ;;
+        --allow-domain=*)
+            EXTRA_DOMAINS+=("${1#*=}")
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options] [max_iterations]"
             echo ""
@@ -109,6 +118,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model MODEL     Claude model (default: claude-sonnet-4-5-20250929)"
             echo "  --memory SIZE     Per-container memory limit (default: 4g)"
             echo "  --cpus N          Per-container CPU limit (default: 2)"
+            echo "  --allow-domain D  Extra domain to whitelist in firewall (repeatable)"
             echo ""
             echo "Arguments:"
             echo "  max_iterations    Per-agent iteration cap (default: 0 = until PRD complete)"
@@ -177,6 +187,13 @@ log_info "Model: $CLAUDE_MODEL"
 log_info "Memory: $CONTAINER_MEMORY per container"
 log_info "CPUs: $CONTAINER_CPUS per container"
 log_info "Max iterations: $MAX_ITERATIONS (0=until PRD complete)"
+if [ ${#EXTRA_DOMAINS[@]} -gt 0 ]; then
+    RALPH_EXTRA_DOMAINS=$(IFS=,; echo "${EXTRA_DOMAINS[*]}")
+    export RALPH_EXTRA_DOMAINS
+    log_info "Extra domains: $RALPH_EXTRA_DOMAINS"
+else
+    RALPH_EXTRA_DOMAINS=""
+fi
 echo ""
 
 # --- Step 1: Build or verify Docker image ---
@@ -215,7 +232,7 @@ BARE_REPO="$PROJECT_DIR/.ralph/repo.git"
 if [ ! -d "$BARE_REPO" ]; then
     log_info "Creating bare repo for agent coordination..."
     mkdir -p "$PROJECT_DIR/.ralph"
-    git clone --bare "$PROJECT_DIR" "$BARE_REPO"
+    git clone --bare --filter=blob:none "$PROJECT_DIR" "$BARE_REPO"
     log_info "Bare repo created at $BARE_REPO"
 else
     # Update the bare repo from the working directory
@@ -225,7 +242,8 @@ else
     cd - > /dev/null
 fi
 
-rm -f "$PROJECT_DIR/.ralph/stop_requested"
+# Clear any previous stop signal (truncate to empty; file is kept for Docker bind-mount)
+: > "$PROJECT_DIR/.ralph/stop_requested"
 
 # --- Step 6: Launch agent containers ---
 AGENT_NUM=0
@@ -371,7 +389,7 @@ while true; do
     sleep "$MONITOR_INTERVAL"
 
     # Check if stop was requested
-    if [ -f "$PROJECT_DIR/.ralph/stop_requested" ]; then
+    if [ -s "$PROJECT_DIR/.ralph/stop_requested" ]; then
         log_info "Stop requested. Shutting down all agents..."
         for name in "${CONTAINER_NAMES[@]}"; do
             stop_agent "$name" 30

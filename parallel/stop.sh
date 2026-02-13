@@ -30,7 +30,7 @@ PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 # --- Signal stop ---
 log_info "Requesting graceful stop for Ralph parallel agents..."
 mkdir -p "$PROJECT_DIR/.ralph"
-touch "$PROJECT_DIR/.ralph/stop_requested"
+echo "stop" > "$PROJECT_DIR/.ralph/stop_requested"
 
 # --- Wait for containers to stop ---
 TIMEOUT=120

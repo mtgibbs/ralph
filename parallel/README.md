@@ -42,11 +42,14 @@ export RALPH_CLAUDE_TOKEN='<your-oauth-token-json>'
 ./parallel/ralph-parallel.sh [options] [max_iterations]
 
 Options:
-  --agents N        Number of builder agents (default: 2)
-  --researcher N    Number of researcher agents with full internet (default: 0)
-  --model MODEL     Claude model (default: claude-sonnet-4-5-20250929)
-  --memory SIZE     Per-container memory limit (default: 4g)
-  --cpus N          Per-container CPU limit (default: 2)
+  --project DIR       Project directory with prd.json (default: current dir)
+  --image IMAGE       Custom Docker image (default: ralph-agent:latest)
+  --agents N          Number of builder agents (default: 2)
+  --researcher N      Number of researcher agents with full internet (default: 0)
+  --model MODEL       Claude model (default: claude-sonnet-4-5-20250929)
+  --memory SIZE       Per-container memory limit (default: 4g)
+  --cpus N            Per-container CPU limit (default: 2)
+  --allow-domain D    Extra domain to whitelist in firewall (repeatable)
 
 Arguments:
   max_iterations    Per-agent iteration cap (default: 0 = until PRD complete)
@@ -81,13 +84,84 @@ The orchestrator checks for claims older than 30 minutes where the agent's conta
 
 | Role | Network | Purpose |
 |------|---------|---------|
-| `builder` | API + npm only | Feature implementation, testing, code changes |
+| `builder` | API + allowed domains only | Feature implementation, testing, code changes |
 | `researcher` | Full internet | Web research, documentation lookup |
 
 Builder agents are restricted via iptables to only reach:
-- `api.anthropic.com` (Claude API)
-- `statsig.anthropic.com` (telemetry)
-- `registry.npmjs.org` (npm packages)
+- `api.anthropic.com` (Claude API) — always allowed
+- `statsig.anthropic.com` (telemetry) — always allowed
+- Any domains passed via `--allow-domain`
+
+Use `--allow-domain` to whitelist package registries your project needs:
+
+```bash
+# Node.js
+./parallel/ralph-parallel.sh --allow-domain registry.npmjs.org
+
+# Python
+./parallel/ralph-parallel.sh \
+  --allow-domain pypi.org \
+  --allow-domain files.pythonhosted.org
+
+# Go
+./parallel/ralph-parallel.sh \
+  --allow-domain proxy.golang.org \
+  --allow-domain sum.golang.org
+
+# Rust
+./parallel/ralph-parallel.sh \
+  --allow-domain crates.io \
+  --allow-domain static.crates.io
+```
+
+## Custom Images
+
+The default `ralph-agent:latest` image is based on `node:20-slim` (Node.js is required for Claude Code). If your project needs additional runtimes (Python, Go, Rust, etc.), extend the base image.
+
+### Image Contract
+
+When extending `ralph-agent:latest`, you **must**:
+
+- Preserve the `agent` user (UID 1001) — do not delete or change its UID
+- Keep the `/opt/ralph/` scripts intact — do not remove or modify them
+- Keep the default `ENTRYPOINT` (`/opt/ralph/agent-loop.sh`)
+- Switch back to `USER agent` after installing system packages
+
+### Example: Adding Python
+
+```dockerfile
+FROM ralph-agent:latest
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+USER agent
+```
+
+### Example: Adding Go
+
+```dockerfile
+FROM ralph-agent:latest
+USER root
+RUN curl -fsSL https://go.dev/dl/go1.22.0.linux-$(dpkg --print-architecture).tar.gz \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+USER agent
+```
+
+### Using a Custom Image
+
+Build your extended image, then pass it with `--image`:
+
+```bash
+docker build -t my-project-agent:latest -f Dockerfile.myproject .
+
+./parallel/ralph-parallel.sh \
+  --project /path/to/project \
+  --image my-project-agent:latest \
+  --allow-domain pypi.org \
+  --agents 3
+```
 
 ## File Layout
 
@@ -95,7 +169,7 @@ Builder agents are restricted via iptables to only reach:
 docker/
 ├── Dockerfile                      # Container image: node:20-slim + claude-code
 ├── agent-loop.sh                   # Container entrypoint: firewall → auth → clone → loop
-├── init-firewall-builder.sh        # iptables: whitelist API + npm only
+├── init-firewall-builder.sh        # iptables: whitelist API + allowed domains
 └── init-firewall-researcher.sh     # No-op (full internet)
 
 parallel/

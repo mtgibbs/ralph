@@ -51,7 +51,7 @@ echo "========================================"
 echo ""
 
 # --- Stop signal check ---
-if [ -f "$PROJECT_DIR/.ralph/stop_requested" ]; then
+if [ -s "$PROJECT_DIR/.ralph/stop_requested" ]; then
     echo "** STOP REQUESTED -- agents will exit after current iteration **"
     echo ""
 fi

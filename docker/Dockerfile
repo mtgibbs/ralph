@@ -20,7 +20,7 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN useradd -m -s /bin/bash -u 1001 agent
 
 # Allow agent to run firewall init scripts via sudo (no password)
-RUN echo "agent ALL=(root) NOPASSWD: /opt/ralph/init-firewall-builder.sh, /opt/ralph/init-firewall-researcher.sh" \
+RUN echo "agent ALL=(root) NOPASSWD:SETENV: /opt/ralph/init-firewall-builder.sh, /opt/ralph/init-firewall-researcher.sh" \
     > /etc/sudoers.d/agent-firewall && chmod 0440 /etc/sudoers.d/agent-firewall
 
 # Copy scripts

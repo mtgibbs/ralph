@@ -37,7 +37,7 @@ case "$AGENT_ROLE" in
         sudo /opt/ralph/init-firewall-researcher.sh
         ;;
     *)
-        sudo /opt/ralph/init-firewall-builder.sh
+        sudo RALPH_EXTRA_DOMAINS="${RALPH_EXTRA_DOMAINS:-}" /opt/ralph/init-firewall-builder.sh
         ;;
 esac
 
@@ -238,7 +238,7 @@ echo "[$AGENT_ID] Entering main loop"
 
 while true; do
     # Check stop signal
-    if [ -f "$STOP_FILE" ]; then
+    if [ -s "$STOP_FILE" ]; then
         echo "[$AGENT_ID] Stop requested. Exiting gracefully."
         exit 0
     fi

@@ -10,7 +10,7 @@ build_image() {
     local docker_dir="$1"
 
     log_info "Building Ralph agent image..."
-    docker build --platform linux/arm64 -t "$RALPH_IMAGE" "$docker_dir"
+    docker build -t "$RALPH_IMAGE" "$docker_dir"
     log_info "Image built: $RALPH_IMAGE"
 }
 
@@ -19,7 +19,7 @@ check_auth_volume() {
     if ! docker volume inspect "$CLAUDE_AUTH_VOLUME" &> /dev/null; then
         log_error "Claude auth volume '$CLAUDE_AUTH_VOLUME' not found."
         log_error "Run the auth setup first:"
-        log_error "  docker run -it --platform linux/arm64 --entrypoint bash \\"
+        log_error "  docker run -it --entrypoint bash \\"
         log_error "    -v $CLAUDE_AUTH_VOLUME:/home/agent/.claude \\"
         log_error "    $RALPH_IMAGE"
         log_error "  Then inside: claude login"
@@ -28,7 +28,7 @@ check_auth_volume() {
 
     # Quick check that credentials exist on the volume
     local has_creds
-    has_creds=$(docker run --rm --platform linux/arm64 --entrypoint test \
+    has_creds=$(docker run --rm --entrypoint test \
         -v "$CLAUDE_AUTH_VOLUME":/claude-auth:ro \
         "$RALPH_IMAGE" -f /claude-auth/.credentials.json && echo "yes" || echo "no")
 
@@ -65,13 +65,14 @@ launch_agent() {
 
     log_info "Launching container: $container_name (role=$agent_role, network=$network)"
 
-    # Ensure log and state directories exist
+    # Ensure log and state directories exist, and stop signal file is present
+    # (Docker errors on bind-mounting a nonexistent file)
     mkdir -p "$project_dir_abs/agent_logs" "$project_dir_abs/.ralph"
+    touch "$project_dir_abs/.ralph/stop_requested"
 
     docker run -d \
         --name "$container_name" \
         --network "$network" \
-        --platform linux/arm64 \
         --memory="$container_memory" \
         --cpus="$container_cpus" \
         --pids-limit=256 \
@@ -81,11 +82,12 @@ launch_agent() {
         -e "AGENT_ROLE=$agent_role" \
         -e "CLAUDE_MODEL=$claude_model" \
         -e "MAX_ITERATIONS=$max_iterations" \
+        -e "RALPH_EXTRA_DOMAINS=${RALPH_EXTRA_DOMAINS:-}" \
         -v "$CLAUDE_AUTH_VOLUME:/claude-auth:ro" \
         -v "$project_dir_abs/.ralph/repo.git:/repo.git:rw" \
         -v "$prompt_path:/parallel-prompt/CLAUDE-parallel.md:ro" \
         -v "$project_dir_abs/agent_logs:/agent-logs:rw" \
-        -v "$project_dir_abs/.ralph:/harness-state:ro" \
+        -v "$project_dir_abs/.ralph/stop_requested:/harness-state/stop_requested:ro" \
         "$RALPH_IMAGE"
 
     log_info "Container $container_name started"
