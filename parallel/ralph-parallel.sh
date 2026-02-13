@@ -10,6 +10,7 @@ set -euo pipefail
 # Usage: ./parallel/ralph-parallel.sh [options] [max_iterations]
 #
 # Options:
+#   --project DIR     Project directory containing prd.json (default: current dir)
 #   --agents N        Number of builder agents (default: 2)
 #   --researcher N    Number of researcher agents with full internet (default: 0)
 #   --model MODEL     Claude model to use (default: claude-sonnet-4-5-20250929)
@@ -34,10 +35,19 @@ CONTAINER_MEMORY="4g"
 CONTAINER_CPUS="2"
 MAX_ITERATIONS=0
 STALE_CLAIM_MINUTES=30
+PROJECT_DIR=""
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --project)
+            PROJECT_DIR="$2"
+            shift 2
+            ;;
+        --project=*)
+            PROJECT_DIR="${1#*=}"
+            shift
+            ;;
         --agents)
             NUM_BUILDERS="$2"
             shift 2
@@ -82,6 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options] [max_iterations]"
             echo ""
             echo "Options:"
+            echo "  --project DIR     Project directory with prd.json (default: current dir)"
             echo "  --agents N        Number of builder agents (default: 2)"
             echo "  --researcher N    Number of researcher agents (default: 0)"
             echo "  --model MODEL     Claude model (default: claude-sonnet-4-5-20250929)"
@@ -112,9 +123,15 @@ if [ "$TOTAL_AGENTS" -eq 0 ]; then
 fi
 
 # --- Validate project directory ---
-# Ralph parallel runs from the project root (same as ralph.sh)
-PROJECT_DIR="$RALPH_ROOT"
+# Default to current working directory if --project not specified
+if [ -z "$PROJECT_DIR" ]; then
+    PROJECT_DIR="$(pwd)"
+fi
+# Resolve to absolute path
+PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 PRD_FILE="$PROJECT_DIR/prd.json"
+# CLAUDE-parallel.md lives in the ralph repo, not the project
+PARALLEL_PROMPT="$SCRIPT_DIR/CLAUDE-parallel.md"
 
 if [ ! -f "$PRD_FILE" ]; then
     log_error "No prd.json found in $PROJECT_DIR"
@@ -122,8 +139,13 @@ if [ ! -f "$PRD_FILE" ]; then
     exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/CLAUDE-parallel.md" ]; then
+if [ ! -f "$PARALLEL_PROMPT" ]; then
     log_error "Missing parallel/CLAUDE-parallel.md prompt file"
+    exit 1
+fi
+
+if [ ! -d "$PROJECT_DIR/.git" ]; then
+    log_error "$PROJECT_DIR is not a git repository"
     exit 1
 fi
 
@@ -156,16 +178,12 @@ fi
 # --- Step 2: Create Docker networks ---
 create_networks
 
-# --- Step 3: Fetch Claude auth token ---
-log_info "Fetching Claude auth token..."
-CLAUDE_TOKEN=$(fetch_claude_token "$PROJECT_DIR")
-
-if [ -z "$CLAUDE_TOKEN" ]; then
-    log_error "Failed to retrieve Claude auth token"
-    log_error "Options: set RALPH_CLAUDE_TOKEN env var, write to $PROJECT_DIR/.ralph/token, or configure 1Password"
+# --- Step 3: Verify Claude auth volume ---
+log_info "Checking Claude auth volume..."
+if ! check_auth_volume; then
     exit 1
 fi
-log_info "Auth token retrieved successfully"
+log_info "Claude auth volume verified"
 
 # --- Step 4: Create bare repo for agent coordination ---
 # Agents need a shared bare repo to push to — you can't reliably push
@@ -195,6 +213,8 @@ launch_agents_for_role() {
     local role="$1"
     local count="$2"
 
+    [ "$count" -le 0 ] && return
+
     for i in $(seq 1 "$count"); do
         AGENT_NUM=$((AGENT_NUM + 1))
         local agent_id="agent-${AGENT_NUM}"
@@ -210,7 +230,6 @@ launch_agents_for_role() {
             "$agent_id" \
             "$role" \
             "$PROJECT_DIR" \
-            "$CLAUDE_TOKEN" \
             "$CLAUDE_MODEL" \
             "$MAX_ITERATIONS" \
             "$CONTAINER_MEMORY" \
@@ -338,21 +357,6 @@ while true; do
         teardown_networks
         log_info "All agents stopped. Exiting."
         exit 0
-    fi
-
-    # Check for token refresh
-    if NEW_TOKEN=$(check_token_refresh_file "$PROJECT_DIR"); then
-        log_info "New auth token detected. Restarting all agents with refreshed token..."
-        CLAUDE_TOKEN="$NEW_TOKEN"
-        for name in "${CONTAINER_NAMES[@]}"; do
-            stop_agent "$name" 15
-        done
-        CONTAINER_NAMES=()
-        AGENT_NUM=0
-        launch_agents_for_role "builder" "$NUM_BUILDERS"
-        launch_agents_for_role "researcher" "$NUM_RESEARCHERS"
-        log_info "All agents restarted with new token."
-        continue
     fi
 
     # Recover stale claims

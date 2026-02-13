@@ -4,6 +4,7 @@
 #
 
 RALPH_IMAGE="ralph-agent:latest"
+CLAUDE_AUTH_VOLUME="ralph-claude-auth"
 
 build_image() {
     local docker_dir="$1"
@@ -13,15 +14,40 @@ build_image() {
     log_info "Image built: $RALPH_IMAGE"
 }
 
+# Verify the shared Claude auth volume exists and has credentials
+check_auth_volume() {
+    if ! docker volume inspect "$CLAUDE_AUTH_VOLUME" &> /dev/null; then
+        log_error "Claude auth volume '$CLAUDE_AUTH_VOLUME' not found."
+        log_error "Run the auth setup first:"
+        log_error "  docker run -it --platform linux/arm64 --entrypoint bash \\"
+        log_error "    -v $CLAUDE_AUTH_VOLUME:/home/agent/.claude \\"
+        log_error "    $RALPH_IMAGE"
+        log_error "  Then inside: claude login"
+        return 1
+    fi
+
+    # Quick check that credentials exist on the volume
+    local has_creds
+    has_creds=$(docker run --rm --platform linux/arm64 --entrypoint test \
+        -v "$CLAUDE_AUTH_VOLUME":/claude-auth:ro \
+        "$RALPH_IMAGE" -f /claude-auth/.credentials.json && echo "yes" || echo "no")
+
+    if [ "$has_creds" != "yes" ]; then
+        log_error "No credentials found on auth volume. Run 'claude login' in a container first."
+        return 1
+    fi
+
+    return 0
+}
+
 launch_agent() {
     local agent_id="$1"
     local agent_role="$2"
     local project_dir="$3"
-    local claude_token="$4"
-    local claude_model="$5"
-    local max_iterations="$6"
-    local container_memory="${7:-4g}"
-    local container_cpus="${8:-2}"
+    local claude_model="$4"
+    local max_iterations="$5"
+    local container_memory="${6:-4g}"
+    local container_cpus="${7:-2}"
 
     # Determine network based on role
     local network
@@ -33,6 +59,9 @@ launch_agent() {
     local container_name="ralph-${agent_id}"
     local project_dir_abs
     project_dir_abs="$(cd "$project_dir" && pwd)"
+
+    # PARALLEL_PROMPT is set by ralph-parallel.sh (points to ralph repo's CLAUDE-parallel.md)
+    local prompt_path="${PARALLEL_PROMPT:-$project_dir_abs/parallel/CLAUDE-parallel.md}"
 
     log_info "Launching container: $container_name (role=$agent_role, network=$network)"
 
@@ -50,11 +79,11 @@ launch_agent() {
         --cap-add=NET_RAW \
         -e "AGENT_ID=$agent_id" \
         -e "AGENT_ROLE=$agent_role" \
-        -e "CLAUDE_CODE_OAUTH_TOKEN=$claude_token" \
         -e "CLAUDE_MODEL=$claude_model" \
         -e "MAX_ITERATIONS=$max_iterations" \
+        -v "$CLAUDE_AUTH_VOLUME:/claude-auth:ro" \
         -v "$project_dir_abs/.ralph/repo.git:/repo.git:rw" \
-        -v "$project_dir_abs/parallel/CLAUDE-parallel.md:/parallel-prompt/CLAUDE-parallel.md:ro" \
+        -v "$prompt_path:/parallel-prompt/CLAUDE-parallel.md:ro" \
         -v "$project_dir_abs/agent_logs:/agent-logs:rw" \
         -v "$project_dir_abs/.ralph:/harness-state:ro" \
         "$RALPH_IMAGE"

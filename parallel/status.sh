@@ -3,7 +3,7 @@ set -euo pipefail
 #
 # status.sh — Show status of Ralph parallel agents and PRD stories.
 #
-# Usage: ./parallel/status.sh
+# Usage: ./parallel/status.sh [--project DIR]
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,18 @@ RALPH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SCRIPT_DIR/lib/logging.sh"
 
-PROJECT_DIR="$RALPH_ROOT"
+PROJECT_DIR=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --project) PROJECT_DIR="$2"; shift 2 ;;
+        --project=*) PROJECT_DIR="${1#*=}"; shift ;;
+        *) shift ;;
+    esac
+done
+if [ -z "$PROJECT_DIR" ]; then
+    PROJECT_DIR="$(pwd)"
+fi
+PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 PRD_FILE="$PROJECT_DIR/prd.json"
 BARE_REPO="$PROJECT_DIR/.ralph/repo.git"
 

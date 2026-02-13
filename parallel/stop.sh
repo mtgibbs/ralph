@@ -3,7 +3,7 @@ set -euo pipefail
 #
 # stop.sh — Graceful shutdown of Ralph parallel agents.
 #
-# Usage: ./parallel/stop.sh
+# Usage: ./parallel/stop.sh [--project DIR]
 #
 # Creates a stop_requested file that agents check each iteration.
 # Waits up to 120s for graceful exit, then force-kills remaining containers.
@@ -14,7 +14,18 @@ RALPH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SCRIPT_DIR/lib/logging.sh"
 
-PROJECT_DIR="$RALPH_ROOT"
+PROJECT_DIR=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --project) PROJECT_DIR="$2"; shift 2 ;;
+        --project=*) PROJECT_DIR="${1#*=}"; shift ;;
+        *) shift ;;
+    esac
+done
+if [ -z "$PROJECT_DIR" ]; then
+    PROJECT_DIR="$(pwd)"
+fi
+PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
 # --- Signal stop ---
 log_info "Requesting graceful stop for Ralph parallel agents..."

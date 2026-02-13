@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install claude-code globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create non-root agent user
-RUN useradd -m -s /bin/bash -u 1000 agent
+# Create non-root agent user (UID 1001 since node:20-slim uses 1000 for 'node')
+RUN useradd -m -s /bin/bash -u 1001 agent
 
 # Allow agent to run firewall init scripts via sudo (no password)
 RUN echo "agent ALL=(root) NOPASSWD: /opt/ralph/init-firewall-builder.sh, /opt/ralph/init-firewall-researcher.sh" \

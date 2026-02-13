@@ -9,14 +9,14 @@ set -euo pipefail
 # Expected environment variables:
 #   AGENT_ID                 - Unique agent identifier (e.g., "agent-1")
 #   AGENT_ROLE               - One of: builder, researcher
-#   CLAUDE_CODE_OAUTH_TOKEN  - OAuth token JSON for Claude authentication
 #   MAX_ITERATIONS           - Max loop iterations (0 = infinite, default: 0)
 #   CLAUDE_MODEL             - Model to use (default: claude-sonnet-4-5-20250929)
+#
+# Auth: Claude credentials are mounted via Docker volume at /home/agent/.claude
 #
 
 AGENT_ID="${AGENT_ID:?AGENT_ID is required}"
 AGENT_ROLE="${AGENT_ROLE:?AGENT_ROLE is required}"
-CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:?CLAUDE_CODE_OAUTH_TOKEN is required}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-0}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-sonnet-4-5-20250929}"
 
@@ -41,14 +41,18 @@ case "$AGENT_ROLE" in
         ;;
 esac
 
-# --- Step 2: Write Claude auth credentials ---
-echo "[$AGENT_ID] Configuring Claude authentication"
+# --- Step 2: Copy Claude auth credentials from mounted volume ---
+if [ ! -f /claude-auth/.credentials.json ]; then
+    echo "[$AGENT_ID] ERROR: No Claude credentials found at /claude-auth/.credentials.json"
+    echo "[$AGENT_ID] Ensure the ralph-claude-auth volume is mounted."
+    exit 1
+fi
 mkdir -p ~/.claude
-echo "$CLAUDE_CODE_OAUTH_TOKEN" > ~/.claude/.credentials.json
+cp /claude-auth/.credentials.json ~/.claude/.credentials.json
 chmod 600 ~/.claude/.credentials.json
-export CLAUDE_CODE_OAUTH_TOKEN
+echo "[$AGENT_ID] Claude credentials copied"
 
-# --- Step 3: Clone or update workspace from project mount ---
+# --- Step 3: Clone or update workspace from bare repo ---
 setup_workspace() {
     if [ -d "$WORKSPACE/.git" ]; then
         echo "[$AGENT_ID] Fetching latest changes"
