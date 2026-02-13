@@ -10,7 +10,7 @@ Run N containerized Claude Code agents simultaneously against the same PRD. Each
    - Claims a story in `prd.json` via git atomic push
    - Runs Claude Code with the parallel prompt
    - Pushes results and picks the next story
-3. The orchestrator monitors container health, recovers stale claims, and handles token refresh
+3. The orchestrator monitors container health and recovers stale claims
 4. When all stories have `passes: true`, everything shuts down
 
 ## Prerequisites
@@ -62,10 +62,6 @@ Token retrieval priority (first wins):
 1. **`RALPH_CLAUDE_TOKEN` env var** — set before running
 2. **`.ralph/token` file** — write your token here
 3. **1Password** via `op read` — interactive, startup only
-
-### Mid-Run Token Refresh
-
-Write a new token to `.ralph/token_refresh`. The orchestrator detects it within 30 seconds and restarts all containers with the new token.
 
 ## Story Claiming
 

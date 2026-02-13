@@ -354,10 +354,10 @@ recover_stale_claims() {
         [ -z "$story_id" ] && continue
         [ -z "$claimed_at" ] && continue
 
-        # Parse claimed_at timestamp (macOS date -j, fallback to GNU date -d)
+        # Parse claimed_at timestamp (GNU date -d first, macOS date -j fallback)
         local claimed_epoch
-        claimed_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$claimed_at" +%s 2>/dev/null \
-            || date -d "$claimed_at" +%s 2>/dev/null \
+        claimed_epoch=$(date -d "$claimed_at" +%s 2>/dev/null \
+            || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$claimed_at" +%s 2>/dev/null \
             || echo "0")
 
         if [ "$claimed_epoch" -eq 0 ]; then

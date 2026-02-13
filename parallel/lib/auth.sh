@@ -57,21 +57,3 @@ fetch_claude_token() {
 
     echo "$token"
 }
-
-# Check if a refreshed token has been dropped into the refresh file.
-# Returns 0 and prints the new token if found, 1 otherwise.
-check_token_refresh_file() {
-    local project_dir="$1"
-    local refresh_file="$project_dir/.ralph/token_refresh"
-
-    if [ -f "$refresh_file" ]; then
-        local new_token
-        new_token=$(cat "$refresh_file")
-        if [ -n "$new_token" ]; then
-            mv "$refresh_file" "${refresh_file}.consumed.$(date +%s)"
-            echo "$new_token"
-            return 0
-        fi
-    fi
-    return 1
-}

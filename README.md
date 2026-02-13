@@ -284,8 +284,6 @@ Priority order (first wins):
 2. `.ralph/token` file in the project directory
 3. 1Password via `op read` (interactive, startup only)
 
-To refresh the token mid-run without stopping, write a new token to `.ralph/token_refresh`. The orchestrator picks it up within 30 seconds and restarts all containers.
-
 See [parallel/README.md](parallel/README.md) for full documentation.
 
 ## References
