@@ -11,6 +11,7 @@ set -euo pipefail
 #
 # Options:
 #   --project DIR     Project directory containing prd.json (default: current dir)
+#   --image IMAGE     Custom Docker image (default: ralph-agent:latest, auto-built)
 #   --agents N        Number of builder agents (default: 2)
 #   --researcher N    Number of researcher agents with full internet (default: 0)
 #   --model MODEL     Claude model to use (default: claude-sonnet-4-5-20250929)
@@ -36,6 +37,7 @@ CONTAINER_CPUS="2"
 MAX_ITERATIONS=0
 STALE_CLAIM_MINUTES=30
 PROJECT_DIR=""
+CUSTOM_IMAGE=""
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -46,6 +48,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --project=*)
             PROJECT_DIR="${1#*=}"
+            shift
+            ;;
+        --image)
+            CUSTOM_IMAGE="$2"
+            shift 2
+            ;;
+        --image=*)
+            CUSTOM_IMAGE="${1#*=}"
             shift
             ;;
         --agents)
@@ -93,6 +103,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --project DIR     Project directory with prd.json (default: current dir)"
+            echo "  --image IMAGE     Custom Docker image (default: ralph-agent:latest)"
             echo "  --agents N        Number of builder agents (default: 2)"
             echo "  --researcher N    Number of researcher agents (default: 0)"
             echo "  --model MODEL     Claude model (default: claude-sonnet-4-5-20250929)"
@@ -161,18 +172,29 @@ log_info "Project: $PROJECT_NAME"
 log_info "Branch: ${BRANCH_NAME:-<not set>}"
 log_info "Stories: $DONE_STORIES/$TOTAL_STORIES complete"
 log_info "Agents: $NUM_BUILDERS builders, $NUM_RESEARCHERS researchers ($TOTAL_AGENTS total)"
+log_info "Image: ${CUSTOM_IMAGE:-$RALPH_IMAGE (default)}"
 log_info "Model: $CLAUDE_MODEL"
 log_info "Memory: $CONTAINER_MEMORY per container"
 log_info "CPUs: $CONTAINER_CPUS per container"
 log_info "Max iterations: $MAX_ITERATIONS (0=until PRD complete)"
 echo ""
 
-# --- Step 1: Build Docker image if needed ---
-log_info "Checking Docker image..."
-if ! docker image inspect "$RALPH_IMAGE" &> /dev/null; then
-    build_image "$RALPH_ROOT/docker"
+# --- Step 1: Build or verify Docker image ---
+if [ -n "$CUSTOM_IMAGE" ]; then
+    # User specified a custom image — use it, don't auto-build
+    export RALPH_IMAGE="$CUSTOM_IMAGE"
+    log_info "Using custom image: $RALPH_IMAGE"
+    if ! docker image inspect "$RALPH_IMAGE" &> /dev/null; then
+        log_error "Custom image '$RALPH_IMAGE' not found. Build it first."
+        exit 1
+    fi
 else
-    log_info "Image $RALPH_IMAGE already exists. Use 'docker rmi $RALPH_IMAGE' to force rebuild."
+    log_info "Checking Docker image..."
+    if ! docker image inspect "$RALPH_IMAGE" &> /dev/null; then
+        build_image "$RALPH_ROOT/docker"
+    else
+        log_info "Image $RALPH_IMAGE already exists. Use 'docker rmi $RALPH_IMAGE' to force rebuild."
+    fi
 fi
 
 # --- Step 2: Create Docker networks ---

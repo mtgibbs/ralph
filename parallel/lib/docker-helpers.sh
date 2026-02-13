@@ -3,7 +3,7 @@
 # docker-helpers.sh — Container launch and management helpers for Ralph parallel mode.
 #
 
-RALPH_IMAGE="ralph-agent:latest"
+RALPH_IMAGE="${RALPH_IMAGE:-ralph-agent:latest}"
 CLAUDE_AUTH_VOLUME="ralph-claude-auth"
 
 build_image() {
