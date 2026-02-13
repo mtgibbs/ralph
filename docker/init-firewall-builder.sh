@@ -26,6 +26,8 @@ ALLOWED_DOMAINS=(
     "api.anthropic.com"
     "statsig.anthropic.com"
     "registry.npmjs.org"
+    "jsr.io"
+    "deno.land"
 )
 
 for domain in "${ALLOWED_DOMAINS[@]}"; do
