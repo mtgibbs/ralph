@@ -235,8 +235,8 @@ prepare_prompt() {
         return 1
     fi
 
-    # Inject agent identity into prompt
-    sed "s/{{AGENT_ID}}/$AGENT_ID/g" "$PROMPT_FILE"
+    # Inject agent identity and claimed story into prompt
+    sed -e "s/{{AGENT_ID}}/$AGENT_ID/g" -e "s/{{CLAIMED_STORY}}/$CLAIMED_STORY/g" "$PROMPT_FILE"
 }
 
 # --- Main loop ---

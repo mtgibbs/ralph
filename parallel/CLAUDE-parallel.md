@@ -4,43 +4,20 @@ You are **{{AGENT_ID}}**, an autonomous coding agent running in parallel with ot
 
 ## Your Task
 
+Your assigned story is **{{CLAIMED_STORY}}** — it has already been claimed for you in prd.json. Do NOT claim or work on any other story.
+
 1. Read the PRD at `prd.json`
 2. Read ALL progress files: `progress.txt` and any `progress-*.txt` files (check Codebase Patterns section first)
 3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
-4. **Claim** the highest priority user story where `passes: false` AND `claimed_by` is empty (see Claim Protocol below)
-5. Implement that single user story
+4. `git pull --rebase` to get the latest code
+5. Implement **only** story **{{CLAIMED_STORY}}**
 6. Run quality checks (e.g., typecheck, lint, test - use whatever your project requires)
 7. Update AGENTS.md files if you discover reusable patterns (see below)
-8. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
-9. Update the PRD to set `passes: true` for the completed story
+8. If checks pass, commit ALL changes with message: `feat: {{CLAIMED_STORY}} - [Story Title]`
+9. Update the PRD to set `passes: true` for **{{CLAIMED_STORY}}** only
 10. Append your progress to `progress-{{AGENT_ID}}.txt`
 
-## Claim Protocol
-
-You are running alongside other agents. To avoid duplicate work, you must **claim** a story before working on it using git's atomic push as a lock:
-
-1. `git pull --rebase` to get latest prd.json
-2. Find the highest-priority story where `passes: false` AND (`claimed_by` is null or empty)
-3. Set `claimed_by: "{{AGENT_ID}}"` and `claimed_at: "<ISO timestamp>"` in prd.json for that story
-4. `git add prd.json && git commit -m "[{{AGENT_ID}}] Claim: <STORY-ID>"`
-5. `git push`
-6. **If push fails** — another agent claimed something concurrently. Run `git pull --rebase` and pick a different unclaimed story. Repeat up to 3 times.
-7. After completing work, set `passes: true` in prd.json, commit, and push.
-
-### Example claim in prd.json:
-```json
-{
-  "id": "US-001",
-  "title": "Add priority field",
-  "passes": false,
-  "claimed_by": "{{AGENT_ID}}",
-  "claimed_at": "2025-01-15T10:30:00Z",
-  "priority": 1
-}
-```
-
-### 3-Strike Rule for Claims
-If your `git push` fails 3 times in a row when trying to claim, document the situation in `progress-{{AGENT_ID}}.txt` and wait 30 seconds before retrying. Do not spin indefinitely.
+**Important**: Do NOT modify `claimed_by` fields or claim additional stories. The harness script manages claiming. You implement the one story assigned to you.
 
 ## Per-Agent Progress Files
 
