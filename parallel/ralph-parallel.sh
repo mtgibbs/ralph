@@ -31,6 +31,7 @@ source "$SCRIPT_DIR/lib/docker-helpers.sh"
 # --- Defaults ---
 NUM_BUILDERS=2
 NUM_RESEARCHERS=0
+NUM_VERIFIERS=0
 CLAUDE_MODEL="claude-sonnet-4-5-20250929"
 CONTAINER_MEMORY="4g"
 CONTAINER_CPUS="2"
@@ -75,6 +76,14 @@ while [[ $# -gt 0 ]]; do
             NUM_RESEARCHERS="${1#*=}"
             shift
             ;;
+        --verifier)
+            NUM_VERIFIERS="$2"
+            shift 2
+            ;;
+        --verifier=*)
+            NUM_VERIFIERS="${1#*=}"
+            shift
+            ;;
         --model)
             CLAUDE_MODEL="$2"
             shift 2
@@ -115,6 +124,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --image IMAGE     Custom Docker image (default: ralph-agent:latest)"
             echo "  --agents N        Number of builder agents (default: 2)"
             echo "  --researcher N    Number of researcher agents (default: 0)"
+            echo "  --verifier N      Number of verifier agents (default: 0)"
             echo "  --model MODEL     Claude model (default: claude-sonnet-4-5-20250929)"
             echo "  --memory SIZE     Per-container memory limit (default: 4g)"
             echo "  --cpus N          Per-container CPU limit (default: 2)"
@@ -136,7 +146,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-TOTAL_AGENTS=$((NUM_BUILDERS + NUM_RESEARCHERS))
+TOTAL_AGENTS=$((NUM_BUILDERS + NUM_RESEARCHERS + NUM_VERIFIERS))
 
 if [ "$TOTAL_AGENTS" -eq 0 ]; then
     log_error "No agents configured. Use --agents N and/or --researcher N."
@@ -153,6 +163,7 @@ PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 PRD_FILE="$PROJECT_DIR/prd.json"
 # CLAUDE-parallel.md lives in the ralph repo, not the project
 PARALLEL_PROMPT="$SCRIPT_DIR/CLAUDE-parallel.md"
+VERIFIER_PROMPT="$SCRIPT_DIR/CLAUDE-verifier.md"
 
 if [ ! -f "$PRD_FILE" ]; then
     log_error "No prd.json found in $PROJECT_DIR"
@@ -162,6 +173,11 @@ fi
 
 if [ ! -f "$PARALLEL_PROMPT" ]; then
     log_error "Missing parallel/CLAUDE-parallel.md prompt file"
+    exit 1
+fi
+
+if [ "$NUM_VERIFIERS" -gt 0 ] && [ ! -f "$VERIFIER_PROMPT" ]; then
+    log_error "Missing parallel/CLAUDE-verifier.md prompt file (required when --verifier > 0)"
     exit 1
 fi
 
@@ -181,7 +197,7 @@ log_info "===================="
 log_info "Project: $PROJECT_NAME"
 log_info "Branch: ${BRANCH_NAME:-<not set>}"
 log_info "Stories: $DONE_STORIES/$TOTAL_STORIES complete"
-log_info "Agents: $NUM_BUILDERS builders, $NUM_RESEARCHERS researchers ($TOTAL_AGENTS total)"
+log_info "Agents: $NUM_BUILDERS builders, $NUM_RESEARCHERS researchers, $NUM_VERIFIERS verifiers ($TOTAL_AGENTS total)"
 log_info "Image: ${CUSTOM_IMAGE:-$RALPH_IMAGE (default)}"
 log_info "Model: $CLAUDE_MODEL"
 log_info "Memory: $CONTAINER_MEMORY per container"
@@ -298,6 +314,7 @@ launch_agents_for_role() {
 log_info "Launching agents..."
 launch_agents_for_role "builder" "$NUM_BUILDERS"
 launch_agents_for_role "researcher" "$NUM_RESEARCHERS"
+launch_agents_for_role "verifier" "$NUM_VERIFIERS"
 
 log_info "All $TOTAL_AGENTS agents launched."
 echo ""
@@ -319,14 +336,23 @@ read_from_bare_repo() {
 }
 
 # Helper: check if all stories are complete in the bare repo
+# When verifiers are in use, requires passes AND verified for all stories.
 check_all_stories_complete() {
     local prd_content
     prd_content=$(read_from_bare_repo "prd.json" "$BRANCH_NAME")
     [ -z "$prd_content" ] && return 1
 
-    local incomplete
-    incomplete=$(echo "$prd_content" | jq '[.userStories[] | select(.passes == false)] | length' 2>/dev/null || echo "1")
-    [ "$incomplete" -eq 0 ]
+    if [ "$NUM_VERIFIERS" -gt 0 ]; then
+        # Require both passes and verified
+        local incomplete
+        incomplete=$(echo "$prd_content" | jq '[.userStories[] | select(.passes == false or .verified != true)] | length' 2>/dev/null || echo "1")
+        [ "$incomplete" -eq 0 ]
+    else
+        # Passes-only (backward compat)
+        local incomplete
+        incomplete=$(echo "$prd_content" | jq '[.userStories[] | select(.passes == false)] | length' 2>/dev/null || echo "1")
+        [ "$incomplete" -eq 0 ]
+    fi
 }
 
 recover_stale_claims() {
@@ -401,6 +427,77 @@ recover_stale_claims() {
     fi
 }
 
+recover_stale_verification_claims() {
+    [ "$NUM_VERIFIERS" -eq 0 ] && return
+
+    local prd_content
+    prd_content=$(read_from_bare_repo "prd.json" "$BRANCH_NAME")
+    [ -z "$prd_content" ] && return
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local stale_seconds=$((STALE_CLAIM_MINUTES * 60))
+
+    local vclaims
+    vclaims=$(echo "$prd_content" | jq -r '
+        .userStories[]
+        | select(.passes == true and .verified != true and .verified_by != null and .verified_by != "")
+        | "\(.id)|\(.verified_by)|\(.verified_at // "")"
+    ' 2>/dev/null || echo "")
+
+    [ -z "$vclaims" ] && return
+
+    local cleared=false
+    local updated_prd="$prd_content"
+    while IFS='|' read -r story_id agent verified_at; do
+        [ -z "$story_id" ] && continue
+        [ -z "$verified_at" ] && continue
+
+        local claimed_epoch
+        claimed_epoch=$(date -d "$verified_at" +%s 2>/dev/null \
+            || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$verified_at" +%s 2>/dev/null \
+            || echo "0")
+
+        if [ "$claimed_epoch" -eq 0 ]; then
+            continue
+        fi
+
+        local age=$((now_epoch - claimed_epoch))
+        if [ "$age" -gt "$stale_seconds" ]; then
+            local container_name="ralph-${agent}"
+            if ! is_agent_running "$container_name"; then
+                log_warn "Stale verification claim: $story_id by $agent (${age}s old, container not running). Clearing."
+                updated_prd=$(echo "$updated_prd" | jq --arg sid "$story_id" '
+                    .userStories |= map(
+                        if .id == $sid then
+                            .verified_by = null | .verified_at = null
+                        else . end
+                    )
+                ')
+                cleared=true
+            fi
+        fi
+    done <<< "$vclaims"
+
+    if $cleared; then
+        local temp_dir
+        temp_dir=$(mktemp -d)
+        git clone "$BARE_REPO" "$temp_dir/work" 2>/dev/null
+        cd "$temp_dir/work"
+        git config user.name "ralph-orchestrator"
+        git config user.email "orchestrator@ralph-agent.local"
+        if [ -n "$BRANCH_NAME" ]; then
+            git checkout "$BRANCH_NAME" 2>/dev/null || true
+        fi
+        echo "$updated_prd" | jq '.' > prd.json
+        git add prd.json
+        git commit -m "[orchestrator] Clear stale verification claims" 2>/dev/null || true
+        git push origin 2>/dev/null || true
+        cd - > /dev/null
+        rm -rf "$temp_dir"
+    fi
+}
+
 while true; do
     sleep "$MONITOR_INTERVAL"
 
@@ -417,6 +514,7 @@ while true; do
 
     # Recover stale claims
     recover_stale_claims
+    recover_stale_verification_claims
 
     # Check container health
     ALL_STOPPED=true

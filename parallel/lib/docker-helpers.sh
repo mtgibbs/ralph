@@ -54,7 +54,7 @@ launch_agent() {
     local container_memory="${6:-4g}"
     local container_cpus="${7:-2}"
 
-    # Determine network based on role
+    # Determine network based on role (verifiers use builder network — no internet needed)
     local network
     case "$agent_role" in
         researcher) network="$RESEARCHER_NETWORK" ;;
@@ -65,8 +65,13 @@ launch_agent() {
     local project_dir_abs
     project_dir_abs="$(cd "$project_dir" && pwd)"
 
-    # PARALLEL_PROMPT is set by ralph-parallel.sh (points to ralph repo's CLAUDE-parallel.md)
-    local prompt_path="${PARALLEL_PROMPT:-$project_dir_abs/parallel/CLAUDE-parallel.md}"
+    # Select prompt based on role: verifiers get CLAUDE-verifier.md, others get CLAUDE-parallel.md
+    local prompt_path
+    if [ "$agent_role" = "verifier" ]; then
+        prompt_path="${VERIFIER_PROMPT:-$project_dir_abs/parallel/CLAUDE-verifier.md}"
+    else
+        prompt_path="${PARALLEL_PROMPT:-$project_dir_abs/parallel/CLAUDE-parallel.md}"
+    fi
 
     log_info "Launching container: $container_name (role=$agent_role, network=$network)"
 
@@ -83,6 +88,9 @@ launch_agent() {
         --pids-limit=256 \
         --cap-add=NET_ADMIN \
         --cap-add=NET_RAW \
+        --label "ralph.role=$agent_role" \
+        --label "ralph.agent_id=$agent_id" \
+        --label "ralph.project_dir=$project_dir_abs" \
         -e "AGENT_ID=$agent_id" \
         -e "AGENT_ROLE=$agent_role" \
         -e "CLAUDE_MODEL=$claude_model" \
