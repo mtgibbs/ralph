@@ -114,6 +114,74 @@ checkout_prd_branch() {
     fi
 }
 
+# --- Step 5b: Check if this agent already owns an incomplete story ---
+# Returns 0 and prints story ID if found, returns 1 if no active claim
+check_existing_claim() {
+    cd "$WORKSPACE"
+
+    # Pull latest prd.json
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
+        git pull --rebase >&2 2>&1 || {
+            git rebase --abort >/dev/null 2>&1 || true
+            git fetch origin >&2 2>&1
+            git reset --hard "origin/$current_branch" >&2 2>&1
+        }
+    fi
+
+    if [ ! -f prd.json ]; then
+        return 1
+    fi
+
+    local story_id
+    story_id=$(jq -r --arg agent "$AGENT_ID" '
+        .userStories
+        | map(select(.passes == false and .claimed_by == $agent))
+        | first
+        | .id // empty
+    ' prd.json 2>/dev/null || echo "")
+
+    if [ -n "$story_id" ]; then
+        echo "[$AGENT_ID] Already owns incomplete story: $story_id" >&2
+        echo "$story_id"
+        return 0
+    fi
+    return 1
+}
+
+# --- Step 5c: Release a claim after Claude failure ---
+release_claim() {
+    local story_id="$1"
+    cd "$WORKSPACE"
+
+    if [ ! -f prd.json ]; then
+        return 1
+    fi
+
+    echo "[$AGENT_ID] Releasing claim on $story_id" >&2
+
+    jq --arg sid "$story_id" '
+        .userStories |= map(
+            if .id == $sid then
+                .claimed_by = null | .claimed_at = null
+            else . end
+        )
+    ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+
+    git add prd.json >&2 2>&1
+    git commit -m "[$AGENT_ID] Release: $story_id (Claude failure)" >&2 2>&1 || {
+        git checkout -- prd.json >/dev/null 2>&1 || true
+        return 1
+    }
+    git push >&2 2>&1 || {
+        echo "[$AGENT_ID] Failed to push release for $story_id" >&2
+        git reset --hard HEAD~1 >&2 2>&1
+        return 1
+    }
+    return 0
+}
+
 # --- Step 6: Claim a story in prd.json ---
 # Returns 0 and prints story ID if claimed, returns 1 if no stories available
 claim_story() {
@@ -190,15 +258,96 @@ claim_story() {
     fi
 }
 
+# --- Step 6b: Claim a story for verification ---
+# Returns 0 and prints story ID if claimed, returns 1 if no stories ready for verification
+claim_verification() {
+    cd "$WORKSPACE"
+
+    # Pull latest prd.json
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
+        git pull --rebase >&2 2>&1 || {
+            git rebase --abort >/dev/null 2>&1 || true
+            git fetch origin >&2 2>&1
+            git reset --hard "origin/$current_branch" >&2 2>&1
+        }
+    fi
+
+    if [ ! -f prd.json ]; then
+        echo "[$AGENT_ID] No prd.json found" >&2
+        return 1
+    fi
+
+    # Find stories with passes=true, verified!=true, and no verified_by claim
+    local story_id
+    story_id=$(jq -r '
+        .userStories
+        | map(select(.passes == true and .verified != true and (.verified_by == null or .verified_by == "")))
+        | first
+        | .id // empty
+    ' prd.json 2>/dev/null || echo "")
+
+    if [ -z "$story_id" ]; then
+        echo "[$AGENT_ID] No stories ready for verification" >&2
+        return 1
+    fi
+
+    # Claim it by setting verified_by and verified_at
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    jq --arg agent "$AGENT_ID" --arg ts "$timestamp" --arg sid "$story_id" '
+        .userStories |= map(
+            if .id == $sid then
+                .verified_by = $agent | .verified_at = $ts
+            else . end
+        )
+    ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+
+    git add prd.json >&2 2>&1
+    git commit -m "[$AGENT_ID] Verify claim: $story_id" >&2 2>&1 || {
+        echo "[$AGENT_ID] Failed to commit verification claim for $story_id" >&2
+        git checkout -- prd.json >/dev/null 2>&1 || true
+        return 1
+    }
+
+    # Atomic push
+    if git push >&2 2>&1; then
+        echo "$story_id"
+        return 0
+    else
+        echo "[$AGENT_ID] Push failed (concurrent claim). Resetting and retrying..." >&2
+        git reset --hard HEAD~1 >&2 2>&1
+        local retry_branch
+        retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
+            git pull --rebase >&2 2>&1 || {
+                git rebase --abort >/dev/null 2>&1 || true
+                git fetch origin >&2 2>&1
+                git reset --hard "origin/$retry_branch" >&2 2>&1
+            }
+        fi
+        return 1
+    fi
+}
+
 # --- Step 7: Check if all stories are complete ---
 all_stories_complete() {
     if [ ! -f "$WORKSPACE/prd.json" ]; then
         return 1
     fi
 
-    local incomplete
-    incomplete=$(jq '[.userStories[] | select(.passes == false)] | length' "$WORKSPACE/prd.json" 2>/dev/null || echo "1")
-    [ "$incomplete" -eq 0 ]
+    if [ "$AGENT_ROLE" = "verifier" ]; then
+        # Verifiers check that all stories are both passing AND verified
+        local incomplete
+        incomplete=$(jq '[.userStories[] | select(.passes == false or .verified != true)] | length' "$WORKSPACE/prd.json" 2>/dev/null || echo "1")
+        [ "$incomplete" -eq 0 ]
+    else
+        local incomplete
+        incomplete=$(jq '[.userStories[] | select(.passes == false)] | length' "$WORKSPACE/prd.json" 2>/dev/null || echo "1")
+        [ "$incomplete" -eq 0 ]
+    fi
 }
 
 # --- Step 8: Push changes with retry ---
@@ -272,12 +421,24 @@ while true; do
 
     echo "[$AGENT_ID] === Iteration $ITERATION (commit: $COMMIT) at $TIMESTAMP ==="
 
-    # Attempt to claim a story (retry up to 3 times with different stories)
+    # First check if this agent already owns an incomplete story (from a failed iteration)
     CLAIMED_STORY=""
+
+    if [ "$AGENT_ROLE" = "verifier" ]; then
+        CLAIM_FUNC="claim_verification"
+    else
+        # Check for existing claim before trying to grab a new one
+        if CLAIMED_STORY=$(check_existing_claim); then
+            echo "[$AGENT_ID] Resuming existing claim: $CLAIMED_STORY"
+        fi
+        CLAIM_FUNC="claim_story"
+    fi
+
+    # If no existing claim, attempt to claim a new story (retry up to 3 times)
     CLAIM_ATTEMPTS=0
     while [ $CLAIM_ATTEMPTS -lt 3 ] && [ -z "$CLAIMED_STORY" ]; do
         # Use if to prevent set -e from killing the script on claim failure
-        if CLAIMED_STORY=$(claim_story); then
+        if CLAIMED_STORY=$($CLAIM_FUNC); then
             break
         else
             CLAIMED_STORY=""
@@ -287,14 +448,25 @@ while true; do
     done
 
     if [ -z "$CLAIMED_STORY" ]; then
-        echo "[$AGENT_ID] Could not claim any story. Checking if all complete..."
-        if all_stories_complete; then
-            echo "[$AGENT_ID] All stories complete. Exiting."
-            exit 0
+        if [ "$AGENT_ROLE" = "verifier" ]; then
+            echo "[$AGENT_ID] No stories ready for verification. Checking if all complete..."
+            if all_stories_complete; then
+                echo "[$AGENT_ID] All stories verified. Exiting."
+                exit 0
+            fi
+            echo "[$AGENT_ID] Builders still working. Waiting 30s..."
+            sleep 30
+            continue
+        else
+            echo "[$AGENT_ID] Could not claim any story. Checking if all complete..."
+            if all_stories_complete; then
+                echo "[$AGENT_ID] All stories complete. Exiting."
+                exit 0
+            fi
+            echo "[$AGENT_ID] Stories exist but couldn't claim. Waiting 30s..."
+            sleep 30
+            continue
         fi
-        echo "[$AGENT_ID] Stories exist but couldn't claim. Waiting 30s..."
-        sleep 30
-        continue
     fi
 
     echo "[$AGENT_ID] Claimed story: $CLAIMED_STORY"
@@ -308,13 +480,24 @@ while true; do
 
     # Run Claude
     echo "[$AGENT_ID] Running Claude (model: $CLAUDE_MODEL) for story: $CLAIMED_STORY"
+    CLAUDE_EXIT=0
     claude --dangerously-skip-permissions \
         --print \
         --model "$CLAUDE_MODEL" \
         -p "$PROMPT" \
-        &> "$LOGFILE" || {
-        echo "[$AGENT_ID] Claude exited with error (code: $?). Check log: $LOGFILE"
-    }
+        &> "$LOGFILE" || CLAUDE_EXIT=$?
+
+    # Detect hard failures (auth errors, crashes) — release claim so other agents can take it
+    if [ $CLAUDE_EXIT -ne 0 ] && [ -f "$LOGFILE" ]; then
+        if grep -q "authentication_error\|OAuth token has expired\|Failed to authenticate" "$LOGFILE"; then
+            echo "[$AGENT_ID] Claude auth failure detected. Releasing claim on $CLAIMED_STORY."
+            release_claim "$CLAIMED_STORY" || true
+            echo "[$AGENT_ID] Waiting 60s before retrying (auth may need refresh)..."
+            sleep 60
+            continue
+        fi
+        echo "[$AGENT_ID] Claude exited with error (code: $CLAUDE_EXIT). Check log: $LOGFILE"
+    fi
 
     echo "[$AGENT_ID] Claude session complete. Pushing changes..."
 
