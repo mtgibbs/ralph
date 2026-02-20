@@ -122,6 +122,8 @@ check_existing_claim() {
     # Pull latest prd.json
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -191,6 +193,8 @@ claim_story() {
     # On a new branch with no remote tracking yet, pull will fail — that's fine, we continue
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -247,6 +251,8 @@ claim_story() {
         git reset --hard HEAD~1 >&2 2>&1
         local retry_branch
         retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        # Fetch first to discover remote branches created by other agents
+        git fetch origin >&2 2>&1 || true
         if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
             git pull --rebase >&2 2>&1 || {
                 git rebase --abort >/dev/null 2>&1 || true
@@ -266,6 +272,8 @@ claim_verification() {
     # Pull latest prd.json
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -321,6 +329,8 @@ claim_verification() {
         git reset --hard HEAD~1 >&2 2>&1
         local retry_branch
         retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        # Fetch first to discover remote branches created by other agents
+        git fetch origin >&2 2>&1 || true
         if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
             git pull --rebase >&2 2>&1 || {
                 git rebase --abort >/dev/null 2>&1 || true
@@ -413,6 +423,11 @@ while true; do
         echo "[$AGENT_ID] All stories complete. Exiting."
         exit 0
     fi
+
+    # Clean any unstaged changes from previous iteration to prevent rebase failures
+    cd "$WORKSPACE"
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
 
     ITERATION=$((ITERATION + 1))
     COMMIT=$(git rev-parse --short=6 HEAD 2>/dev/null || echo "000000")
