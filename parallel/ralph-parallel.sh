@@ -270,7 +270,15 @@ else
     # Update the bare repo from the working directory
     log_info "Updating bare repo from project..."
     cd "$PROJECT_DIR"
-    git push "$BARE_REPO" --all 2>/dev/null || true
+    git push --force "$BARE_REPO" --all 2>&1 || {
+        log_error "Failed to sync bare repo from project. Manual intervention required."
+        exit 1
+    }
+    # Clean stale feature branches from bare repo to prevent agents from seeing old state
+    log_info "Cleaning stale branches from bare repo..."
+    git --git-dir="$BARE_REPO" for-each-ref --format='%(refname:short)' refs/heads/ | \
+        grep -v '^main$\|^master$' | \
+        xargs -I{} git --git-dir="$BARE_REPO" branch -D {} 2>/dev/null || true
     cd - > /dev/null
 fi
 

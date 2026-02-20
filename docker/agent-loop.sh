@@ -122,6 +122,8 @@ check_existing_claim() {
     # Pull latest prd.json
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -191,6 +193,8 @@ claim_story() {
     # On a new branch with no remote tracking yet, pull will fail — that's fine, we continue
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -247,6 +251,8 @@ claim_story() {
         git reset --hard HEAD~1 >&2 2>&1
         local retry_branch
         retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        # Fetch first to discover remote branches created by other agents
+        git fetch origin >&2 2>&1 || true
         if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
             git pull --rebase >&2 2>&1 || {
                 git rebase --abort >/dev/null 2>&1 || true
@@ -266,6 +272,8 @@ claim_verification() {
     # Pull latest prd.json
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    # Always fetch first so we discover remote branches created by other agents
+    git fetch origin >&2 2>&1 || true
     if git rev-parse --verify "origin/$current_branch" >/dev/null 2>&1; then
         git pull --rebase >&2 2>&1 || {
             git rebase --abort >/dev/null 2>&1 || true
@@ -321,6 +329,8 @@ claim_verification() {
         git reset --hard HEAD~1 >&2 2>&1
         local retry_branch
         retry_branch=$(git branch --show-current 2>/dev/null || echo "")
+        # Fetch first to discover remote branches created by other agents
+        git fetch origin >&2 2>&1 || true
         if git rev-parse --verify "origin/$retry_branch" >/dev/null 2>&1; then
             git pull --rebase >&2 2>&1 || {
                 git rebase --abort >/dev/null 2>&1 || true
@@ -395,6 +405,9 @@ checkout_prd_branch
 
 echo "[$AGENT_ID] Entering main loop"
 
+AUTH_FAILURES=0
+MAX_AUTH_FAILURES=5
+
 while true; do
     # Check stop signal
     if [ -s "$STOP_FILE" ]; then
@@ -413,6 +426,11 @@ while true; do
         echo "[$AGENT_ID] All stories complete. Exiting."
         exit 0
     fi
+
+    # Clean any unstaged changes from previous iteration to prevent rebase failures
+    cd "$WORKSPACE"
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
 
     ITERATION=$((ITERATION + 1))
     COMMIT=$(git rev-parse --short=6 HEAD 2>/dev/null || echo "000000")
@@ -487,13 +505,28 @@ while true; do
         -p "$PROMPT" \
         &> "$LOGFILE" || CLAUDE_EXIT=$?
 
+    # Reset auth failure counter on successful invocation
+    if [ $CLAUDE_EXIT -eq 0 ]; then
+        AUTH_FAILURES=0
+    fi
+
     # Detect hard failures (auth errors, crashes) — release claim so other agents can take it
     if [ $CLAUDE_EXIT -ne 0 ] && [ -f "$LOGFILE" ]; then
         if grep -q "authentication_error\|OAuth token has expired\|Failed to authenticate" "$LOGFILE"; then
-            echo "[$AGENT_ID] Claude auth failure detected. Releasing claim on $CLAIMED_STORY."
+            AUTH_FAILURES=$((AUTH_FAILURES + 1))
+            echo "[$AGENT_ID] Claude auth failure #$AUTH_FAILURES/$MAX_AUTH_FAILURES. Releasing claim on $CLAIMED_STORY."
+            echo "[$AGENT_ID] Error details from log:"
+            grep -i "error\|rate\|limit\|auth" "$LOGFILE" | tail -5 || true
             release_claim "$CLAIMED_STORY" || true
-            echo "[$AGENT_ID] Waiting 60s before retrying (auth may need refresh)..."
-            sleep 60
+            if [ "$AUTH_FAILURES" -ge "$MAX_AUTH_FAILURES" ]; then
+                echo "[$AGENT_ID] Reached max auth failures ($MAX_AUTH_FAILURES). Exiting to avoid infinite loop."
+                exit 1
+            fi
+            # Exponential backoff: 60, 120, 240, 480, 480 (capped)
+            BACKOFF=$((60 * (1 << (AUTH_FAILURES - 1))))
+            [ "$BACKOFF" -gt 480 ] && BACKOFF=480
+            echo "[$AGENT_ID] Waiting ${BACKOFF}s before retrying (exponential backoff)..."
+            sleep "$BACKOFF"
             continue
         fi
         echo "[$AGENT_ID] Claude exited with error (code: $CLAUDE_EXIT). Check log: $LOGFILE"
