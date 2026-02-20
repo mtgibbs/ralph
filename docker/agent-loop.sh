@@ -405,6 +405,9 @@ checkout_prd_branch
 
 echo "[$AGENT_ID] Entering main loop"
 
+AUTH_FAILURES=0
+MAX_AUTH_FAILURES=5
+
 while true; do
     # Check stop signal
     if [ -s "$STOP_FILE" ]; then
@@ -502,13 +505,28 @@ while true; do
         -p "$PROMPT" \
         &> "$LOGFILE" || CLAUDE_EXIT=$?
 
+    # Reset auth failure counter on successful invocation
+    if [ $CLAUDE_EXIT -eq 0 ]; then
+        AUTH_FAILURES=0
+    fi
+
     # Detect hard failures (auth errors, crashes) — release claim so other agents can take it
     if [ $CLAUDE_EXIT -ne 0 ] && [ -f "$LOGFILE" ]; then
         if grep -q "authentication_error\|OAuth token has expired\|Failed to authenticate" "$LOGFILE"; then
-            echo "[$AGENT_ID] Claude auth failure detected. Releasing claim on $CLAIMED_STORY."
+            AUTH_FAILURES=$((AUTH_FAILURES + 1))
+            echo "[$AGENT_ID] Claude auth failure #$AUTH_FAILURES/$MAX_AUTH_FAILURES. Releasing claim on $CLAIMED_STORY."
+            echo "[$AGENT_ID] Error details from log:"
+            grep -i "error\|rate\|limit\|auth" "$LOGFILE" | tail -5 || true
             release_claim "$CLAIMED_STORY" || true
-            echo "[$AGENT_ID] Waiting 60s before retrying (auth may need refresh)..."
-            sleep 60
+            if [ "$AUTH_FAILURES" -ge "$MAX_AUTH_FAILURES" ]; then
+                echo "[$AGENT_ID] Reached max auth failures ($MAX_AUTH_FAILURES). Exiting to avoid infinite loop."
+                exit 1
+            fi
+            # Exponential backoff: 60, 120, 240, 480, 480 (capped)
+            BACKOFF=$((60 * (1 << (AUTH_FAILURES - 1))))
+            [ "$BACKOFF" -gt 480 ] && BACKOFF=480
+            echo "[$AGENT_ID] Waiting ${BACKOFF}s before retrying (exponential backoff)..."
+            sleep "$BACKOFF"
             continue
         fi
         echo "[$AGENT_ID] Claude exited with error (code: $CLAUDE_EXIT). Check log: $LOGFILE"
