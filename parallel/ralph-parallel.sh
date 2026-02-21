@@ -560,6 +560,17 @@ while true; do
 
             if [ "$EXIT_CODE" = "0" ]; then
                 log_info "Container $name exited cleanly (code 0)."
+            elif [ "$EXIT_CODE" = "2" ]; then
+                log_error "Container $name exited due to auth failure (code 2). Credentials may be expired."
+                log_error "Halting all agents."
+                echo "auth_failure" > "$PROJECT_DIR/.ralph/stop_requested"
+                for stop_name in "${CONTAINER_NAMES[@]}"; do
+                    [ "$stop_name" = "$name" ] && continue
+                    stop_agent "$stop_name" 10
+                done
+                teardown_networks
+                log_error "All agents stopped. Refresh your Claude credentials and re-run."
+                exit 1
             else
                 log_warn "Container $name stopped unexpectedly (exit code: $EXIT_CODE). Restarting..."
                 restart_agent "$name"

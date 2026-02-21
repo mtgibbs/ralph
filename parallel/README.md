@@ -194,6 +194,18 @@ parallel/
     └── logging.sh                  # Timestamped log helpers
 ```
 
+## Exit Codes & Auth Failure Halt
+
+Agent containers use distinct exit codes so the orchestrator can respond appropriately:
+
+| Exit Code | Meaning | Orchestrator Action |
+|-----------|---------|---------------------|
+| 0 | Clean exit (stories complete, stop requested, iteration limit) | No action |
+| 2 | Auth failure (credentials expired after 5 retries) | **Halt all agents** |
+| Other non-zero | Crash, OOM, or unexpected error | Restart the container |
+
+Since all agents share the same credential volume, a single auth failure means none can authenticate. When exit code 2 is detected, the orchestrator immediately stops all remaining containers, tears down networks, and exits with a message to refresh credentials. No restart loop occurs.
+
 ## Per-Agent Progress Files
 
 Instead of all agents appending to one `progress.txt` (merge conflict risk), each agent writes to `progress-<agent-id>.txt`. The parallel prompt instructs agents to read ALL progress files for context and write only to their own.

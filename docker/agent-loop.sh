@@ -14,6 +14,12 @@ set -euo pipefail
 #
 # Auth: Claude credentials are mounted via Docker volume at /home/agent/.claude
 #
+# Exit codes:
+#   0 - Clean exit (all stories complete, stop requested, or iteration limit)
+#   1 - General failure (missing credentials, prompt error, etc.)
+#   2 - Auth failure (expired/invalid credentials after MAX_AUTH_FAILURES retries)
+#       The orchestrator treats exit 2 as a signal to halt all agents.
+#
 
 AGENT_ID="${AGENT_ID:?AGENT_ID is required}"
 AGENT_ROLE="${AGENT_ROLE:?AGENT_ROLE is required}"
@@ -532,7 +538,7 @@ while true; do
             release_claim "$CLAIMED_STORY" || true
             if [ "$AUTH_FAILURES" -ge "$MAX_AUTH_FAILURES" ]; then
                 echo "[$AGENT_ID] Reached max auth failures ($MAX_AUTH_FAILURES). Exiting to avoid infinite loop."
-                exit 1
+                exit 2
             fi
             # Exponential backoff: 60, 120, 240, 480, 480 (capped)
             BACKOFF=$((60 * (1 << (AUTH_FAILURES - 1))))
