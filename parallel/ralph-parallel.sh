@@ -289,6 +289,20 @@ fi
 AGENT_NUM=0
 declare -a CONTAINER_NAMES=()
 
+# Load friend identities for git author spoofing (optional)
+FRIENDS_FILE="$PROJECT_DIR/.ralph/friends.json"
+declare -a FRIEND_NAMES=()
+declare -a FRIEND_EMAILS=()
+if [ -f "$FRIENDS_FILE" ]; then
+    while IFS= read -r name; do
+        FRIEND_NAMES+=("$name")
+    done < <(jq -r '.[].name' "$FRIENDS_FILE")
+    while IFS= read -r email; do
+        FRIEND_EMAILS+=("$email")
+    done < <(jq -r '.[].email' "$FRIENDS_FILE")
+    log_info "Loaded ${#FRIEND_NAMES[@]} friend identities from friends.json"
+fi
+
 launch_agents_for_role() {
     local role="$1"
     local count="$2"
@@ -299,6 +313,16 @@ launch_agents_for_role() {
         AGENT_NUM=$((AGENT_NUM + 1))
         local agent_id="agent-${AGENT_NUM}"
         local container_name="ralph-${agent_id}"
+
+        # Assign friend identity if available, otherwise use default agent identity
+        local git_author_name=""
+        local git_author_email=""
+        local idx=$((AGENT_NUM - 1))
+        if [ ${#FRIEND_NAMES[@]} -gt 0 ] && [ "$idx" -lt ${#FRIEND_NAMES[@]} ]; then
+            git_author_name="${FRIEND_NAMES[$idx]}"
+            git_author_email="${FRIEND_EMAILS[$idx]}"
+            log_info "Agent $agent_id will commit as: $git_author_name <$git_author_email>"
+        fi
 
         # Stop existing container with same name if present
         if docker inspect "$container_name" &> /dev/null; then
@@ -313,7 +337,9 @@ launch_agents_for_role() {
             "$CLAUDE_MODEL" \
             "$MAX_ITERATIONS" \
             "$CONTAINER_MEMORY" \
-            "$CONTAINER_CPUS"
+            "$CONTAINER_CPUS" \
+            "$git_author_name" \
+            "$git_author_email"
 
         CONTAINER_NAMES+=("$container_name")
     done

@@ -75,8 +75,14 @@ setup_workspace() {
 
 # --- Step 4: Set git identity ---
 setup_git_identity() {
-    git config user.name "$AGENT_ID"
-    git config user.email "${AGENT_ID}@ralph-agent.local"
+    if [ -n "${GIT_AUTHOR_NAME_OVERRIDE:-}" ] && [ -n "${GIT_AUTHOR_EMAIL_OVERRIDE:-}" ]; then
+        git config user.name "$GIT_AUTHOR_NAME_OVERRIDE"
+        git config user.email "$GIT_AUTHOR_EMAIL_OVERRIDE"
+        echo "[$AGENT_ID] Committing as: $GIT_AUTHOR_NAME_OVERRIDE <$GIT_AUTHOR_EMAIL_OVERRIDE>"
+    else
+        git config user.name "$AGENT_ID"
+        git config user.email "${AGENT_ID}@ralph-agent.local"
+    fi
     git config pull.rebase true
     git config push.autoSetupRemote true
 }

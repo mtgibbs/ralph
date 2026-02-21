@@ -53,6 +53,8 @@ launch_agent() {
     local max_iterations="$5"
     local container_memory="${6:-4g}"
     local container_cpus="${7:-2}"
+    local git_author_name="${8:-}"
+    local git_author_email="${9:-}"
 
     # Determine network based on role (verifiers use builder network — no internet needed)
     local network
@@ -95,6 +97,8 @@ launch_agent() {
         -e "AGENT_ROLE=$agent_role" \
         -e "CLAUDE_MODEL=$claude_model" \
         -e "MAX_ITERATIONS=$max_iterations" \
+        -e "GIT_AUTHOR_NAME_OVERRIDE=${git_author_name}" \
+        -e "GIT_AUTHOR_EMAIL_OVERRIDE=${git_author_email}" \
         -e "RALPH_EXTRA_DOMAINS=${RALPH_EXTRA_DOMAINS:-}" \
         -v "$CLAUDE_AUTH_VOLUME:/claude-auth:ro" \
         -v "$project_dir_abs/.ralph/repo.git:/repo.git:rw" \
