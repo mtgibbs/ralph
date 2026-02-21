@@ -277,7 +277,7 @@ else
     # Clean stale feature branches from bare repo to prevent agents from seeing old state
     log_info "Cleaning stale branches from bare repo..."
     git --git-dir="$BARE_REPO" for-each-ref --format='%(refname:short)' refs/heads/ | \
-        grep -v '^main$\|^master$' | \
+        grep -Ev '^(main|master)$' | \
         xargs -I{} git --git-dir="$BARE_REPO" branch -D {} 2>/dev/null || true
     cd - > /dev/null
 fi
