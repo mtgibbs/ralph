@@ -214,11 +214,17 @@ claim_story() {
         return 1
     fi
 
-    # Find highest-priority unclaimed story (passes: false AND no claimed_by)
+    # Find highest-priority unclaimed story whose dependencies are all satisfied
     local story_id
     story_id=$(jq -r '
-        .userStories
-        | map(select(.passes == false and (.claimed_by == null or .claimed_by == "")))
+        . as $prd |
+        ($prd.userStories | map(select(.passes == true)) | map(.id)) as $passed |
+        $prd.userStories
+        | map(select(
+            .passes == false
+            and (.claimed_by == null or .claimed_by == "")
+            and ((.dependsOn // []) | all(. as $dep | $passed | any(. == $dep)))
+        ))
         | sort_by(.priority)
         | first
         | .id // empty

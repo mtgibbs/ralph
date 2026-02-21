@@ -6,6 +6,8 @@ You are **{{AGENT_ID}}**, an autonomous coding agent running in parallel with ot
 
 Your assigned story is **{{CLAIMED_STORY}}** — it has already been claimed for you in prd.json. Do NOT claim or work on any other story.
 
+> **Note:** Stories may have a `dependsOn` field listing prerequisite story IDs. The harness only assigns stories whose dependencies are already complete. You don't need to check this yourself.
+
 1. Read the PRD at `prd.json`
 2. Read ALL progress files: `progress.txt` and any `progress-*.txt` files (check Codebase Patterns section first)
 3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
