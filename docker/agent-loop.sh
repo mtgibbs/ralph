@@ -34,6 +34,18 @@ STOP_FILE="/harness-state/stop_requested"
 LOG_DIR="/agent-logs"
 ITERATION=0
 
+# Detect spec file: prefer prp.json, fall back to prd.json
+detect_spec_file() {
+    local dir="${1:-.}"
+    if [ -f "$dir/prp.json" ]; then
+        echo "prp.json"
+    elif [ -f "$dir/prd.json" ]; then
+        echo "prd.json"
+    else
+        echo "prp.json"  # default for new projects
+    fi
+}
+
 echo "[$AGENT_ID] Starting agent loop (role=$AGENT_ROLE, model=$CLAUDE_MODEL, max_iterations=$MAX_ITERATIONS)"
 
 # --- Step 1: Initialize firewall based on role ---
@@ -93,15 +105,19 @@ setup_git_identity() {
     git config push.autoSetupRemote true
 }
 
-# --- Step 5: Check out the correct branch from prd.json ---
+# --- Step 5: Check out the correct branch from spec file ---
 checkout_prd_branch() {
-    if [ ! -f "$WORKSPACE/prd.json" ]; then
-        echo "[$AGENT_ID] WARNING: No prd.json found in workspace"
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$WORKSPACE/$spec_file" ]; then
+        echo "[$AGENT_ID] WARNING: No prp.json or prd.json found in workspace"
         return 1
     fi
+    echo "[$AGENT_ID] Using spec file: $spec_file"
 
     local branch_name
-    branch_name=$(jq -r '.branchName // empty' "$WORKSPACE/prd.json" 2>/dev/null || echo "")
+    branch_name=$(jq -r '.branchName // empty' "$WORKSPACE/$spec_file" 2>/dev/null || echo "")
 
     if [ -z "$branch_name" ]; then
         echo "[$AGENT_ID] No branchName in prd.json, staying on current branch"
@@ -131,7 +147,7 @@ checkout_prd_branch() {
 check_existing_claim() {
     cd "$WORKSPACE"
 
-    # Pull latest prd.json
+    # Pull latest spec
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
     # Always fetch first so we discover remote branches created by other agents
@@ -144,7 +160,10 @@ check_existing_claim() {
         }
     fi
 
-    if [ ! -f prd.json ]; then
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$spec_file" ]; then
         return 1
     fi
 
@@ -154,7 +173,7 @@ check_existing_claim() {
         | map(select(.passes == false and .claimed_by == $agent))
         | first
         | .id // empty
-    ' prd.json 2>/dev/null || echo "")
+    ' "$spec_file" 2>/dev/null || echo "")
 
     if [ -n "$story_id" ]; then
         echo "[$AGENT_ID] Already owns incomplete story: $story_id" >&2
@@ -169,7 +188,10 @@ release_claim() {
     local story_id="$1"
     cd "$WORKSPACE"
 
-    if [ ! -f prd.json ]; then
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$spec_file" ]; then
         return 1
     fi
 
@@ -181,11 +203,11 @@ release_claim() {
                 .claimed_by = null | .claimed_at = null
             else . end
         )
-    ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+    ' "$spec_file" > "${spec_file}.tmp" && mv "${spec_file}.tmp" "$spec_file"
 
-    git add prd.json >&2 2>&1
+    git add "$spec_file" >&2 2>&1
     git commit -m "[$AGENT_ID] Release: $story_id (Claude failure)" >&2 2>&1 || {
-        git checkout -- prd.json >/dev/null 2>&1 || true
+        git checkout -- "$spec_file" >/dev/null 2>&1 || true
         return 1
     }
     git push >&2 2>&1 || {
@@ -196,12 +218,12 @@ release_claim() {
     return 0
 }
 
-# --- Step 6: Claim a story in prd.json ---
+# --- Step 6: Claim a story in spec file ---
 # Returns 0 and prints story ID if claimed, returns 1 if no stories available
 claim_story() {
     cd "$WORKSPACE"
 
-    # Pull latest prd.json (all git output to stderr to keep stdout clean for return value)
+    # Pull latest spec (all git output to stderr to keep stdout clean for return value)
     # On a new branch with no remote tracking yet, pull will fail — that's fine, we continue
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
@@ -215,8 +237,11 @@ claim_story() {
         }
     fi
 
-    if [ ! -f prd.json ]; then
-        echo "[$AGENT_ID] No prd.json found" >&2
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$spec_file" ]; then
+        echo "[$AGENT_ID] No prp.json or prd.json found" >&2
         return 1
     fi
 
@@ -234,7 +259,7 @@ claim_story() {
         | sort_by(.priority)
         | first
         | .id // empty
-    ' prd.json 2>/dev/null || echo "")
+    ' "$spec_file" 2>/dev/null || echo "")
 
     if [ -z "$story_id" ]; then
         echo "[$AGENT_ID] No unclaimed stories available" >&2
@@ -251,12 +276,12 @@ claim_story() {
                 .claimed_by = $agent | .claimed_at = $ts
             else . end
         )
-    ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+    ' "$spec_file" > "${spec_file}.tmp" && mv "${spec_file}.tmp" "$spec_file"
 
-    git add prd.json >&2 2>&1
+    git add "$spec_file" >&2 2>&1
     git commit -m "[$AGENT_ID] Claim: $story_id" >&2 2>&1 || {
         echo "[$AGENT_ID] Failed to commit claim for $story_id" >&2
-        git checkout -- prd.json >/dev/null 2>&1 || true
+        git checkout -- "$spec_file" >/dev/null 2>&1 || true
         return 1
     }
 
@@ -287,7 +312,7 @@ claim_story() {
 claim_verification() {
     cd "$WORKSPACE"
 
-    # Pull latest prd.json
+    # Pull latest spec
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "")
     # Always fetch first so we discover remote branches created by other agents
@@ -300,8 +325,11 @@ claim_verification() {
         }
     fi
 
-    if [ ! -f prd.json ]; then
-        echo "[$AGENT_ID] No prd.json found" >&2
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$spec_file" ]; then
+        echo "[$AGENT_ID] No prp.json or prd.json found" >&2
         return 1
     fi
 
@@ -312,7 +340,7 @@ claim_verification() {
         | map(select(.passes == true and .verified != true and (.verified_by == null or .verified_by == "")))
         | first
         | .id // empty
-    ' prd.json 2>/dev/null || echo "")
+    ' "$spec_file" 2>/dev/null || echo "")
 
     if [ -z "$story_id" ]; then
         echo "[$AGENT_ID] No stories ready for verification" >&2
@@ -329,12 +357,12 @@ claim_verification() {
                 .verified_by = $agent | .verified_at = $ts
             else . end
         )
-    ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+    ' "$spec_file" > "${spec_file}.tmp" && mv "${spec_file}.tmp" "$spec_file"
 
-    git add prd.json >&2 2>&1
+    git add "$spec_file" >&2 2>&1
     git commit -m "[$AGENT_ID] Verify claim: $story_id" >&2 2>&1 || {
         echo "[$AGENT_ID] Failed to commit verification claim for $story_id" >&2
-        git checkout -- prd.json >/dev/null 2>&1 || true
+        git checkout -- "$spec_file" >/dev/null 2>&1 || true
         return 1
     }
 
@@ -362,18 +390,21 @@ claim_verification() {
 
 # --- Step 7: Check if all stories are complete ---
 all_stories_complete() {
-    if [ ! -f "$WORKSPACE/prd.json" ]; then
+    local spec_file
+    spec_file=$(detect_spec_file "$WORKSPACE")
+
+    if [ ! -f "$WORKSPACE/$spec_file" ]; then
         return 1
     fi
 
     if [ "$AGENT_ROLE" = "verifier" ]; then
         # Verifiers check that all stories are both passing AND verified
         local incomplete
-        incomplete=$(jq '[.userStories[] | select(.passes == false or .verified != true)] | length' "$WORKSPACE/prd.json" 2>/dev/null || echo "1")
+        incomplete=$(jq '[.userStories[] | select(.passes == false or .verified != true)] | length' "$WORKSPACE/$spec_file" 2>/dev/null || echo "1")
         [ "$incomplete" -eq 0 ]
     else
         local incomplete
-        incomplete=$(jq '[.userStories[] | select(.passes == false)] | length' "$WORKSPACE/prd.json" 2>/dev/null || echo "1")
+        incomplete=$(jq '[.userStories[] | select(.passes == false)] | length' "$WORKSPACE/$spec_file" 2>/dev/null || echo "1")
         [ "$incomplete" -eq 0 ]
     fi
 }

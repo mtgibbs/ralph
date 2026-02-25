@@ -4,22 +4,42 @@ You are **{{AGENT_ID}}**, an autonomous coding agent running in parallel with ot
 
 ## Your Task
 
-Your assigned story is **{{CLAIMED_STORY}}** — it has already been claimed for you in prd.json. Do NOT claim or work on any other story.
+Your assigned story is **{{CLAIMED_STORY}}** — it has already been claimed for you in the spec file. Do NOT claim or work on any other story.
 
 > **Note:** Stories may have a `dependsOn` field listing prerequisite story IDs. The harness only assigns stories whose dependencies are already complete. You don't need to check this yourself.
 
-1. Read the PRD at `prd.json`
+1. Read the spec file: check for `prp.json` first, fall back to `prd.json`
 2. Read ALL progress files: `progress.txt` and any `progress-*.txt` files (check Codebase Patterns section first)
-3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
+3. Check you're on the correct branch from the spec's `branchName`. If not, check it out or create from main.
 4. `git pull --rebase` to get the latest code
-5. Implement **only** story **{{CLAIMED_STORY}}**
-6. Run quality checks (e.g., typecheck, lint, test - use whatever your project requires)
-7. Update AGENTS.md files if you discover reusable patterns (see below)
-8. If checks pass, commit ALL changes with message: `feat: {{CLAIMED_STORY}} - [Story Title]`
-9. Update the PRD to set `passes: true` for **{{CLAIMED_STORY}}** only
-10. Append your progress to `progress-{{AGENT_ID}}.txt`
+5. If the spec has a `previousVersion` field (non-null), read the prior version for context on what's already built
+6. Before implementing, read the story's `context` block if present (see PRP Context below)
+7. Implement **only** story **{{CLAIMED_STORY}}**
+8. Run quality checks — if the story has `verificationCommands`, run those; otherwise use project defaults
+9. Update AGENTS.md files if you discover reusable patterns (see below)
+10. If checks pass, commit ALL changes with message: `feat: {{CLAIMED_STORY}} - [Story Title]`
+11. Update the spec to set `passes: true` for **{{CLAIMED_STORY}}** only
+12. Append your progress to `progress-{{AGENT_ID}}.txt`
 
 **Important**: Do NOT modify `claimed_by` fields or claim additional stories. The harness script manages claiming. You implement the one story assigned to you.
+
+## PRP Context
+
+The spec file may contain enriched fields that help you work more effectively. Check for and use these if present:
+
+### Project-Level Fields
+- **`constraints`**: Architectural decisions you MUST follow (e.g., "Use drizzle ORM", "Use server actions for mutations"). Treat these as hard requirements — do not deviate.
+- **`nonGoals`**: Explicit scope boundaries. Before completing a story, verify your implementation doesn't accidentally build something listed as a non-goal.
+- **`glossary`**: Domain term definitions. Use these when you encounter unfamiliar terms in the spec.
+
+### Story-Level Fields
+- **`context.relevantFiles`**: Read these files before starting implementation — they contain the code you'll be modifying or the patterns you should follow.
+- **`context.hints`**: Implementation guidance — what to reuse, what approach to take.
+- **`context.examples`**: Code snippets showing patterns your new code should match.
+- **`verificationCommands`**: Specific shell commands to validate your work. Run these instead of (or in addition to) generic quality checks.
+
+### Version Context
+- **`previousVersion`**: If non-null, points to an archived prior version of this spec. Read it to understand what's already been built — stories with `passes: true` carried over from the previous version are already implemented.
 
 ## Per-Agent Progress Files
 
@@ -97,9 +117,11 @@ Before committing, check if any edited files have learnings worth preserving in 
 ## Quality Requirements
 
 - ALL commits must pass your project's quality checks (typecheck, lint, test)
+- If the story has `verificationCommands`, run those as part of your quality checks
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns
+- If `constraints` exist in the spec, verify your implementation follows them
 
 ## Browser Testing (If Available)
 

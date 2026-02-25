@@ -3,14 +3,14 @@ set -euo pipefail
 #
 # ralph-parallel.sh — Parallel mode orchestrator for Ralph.
 #
-# Launches N containerized Claude Code agents that work on prd.json stories
+# Launches N containerized Claude Code agents that work on prp.json/prd.json stories
 # simultaneously. Each agent runs in a Docker container with network restrictions,
 # resource limits, and no host access.
 #
 # Usage: ./parallel/ralph-parallel.sh [options] [max_iterations]
 #
 # Options:
-#   --project DIR     Project directory containing prd.json (default: current dir)
+#   --project DIR     Project directory containing prp.json/prd.json (default: current dir)
 #   --image IMAGE     Custom Docker image (default: ralph-agent:latest, auto-built)
 #   --agents N        Number of builder agents (default: 2)
 #   --researcher N    Number of researcher agents with full internet (default: 0)
@@ -120,7 +120,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options] [max_iterations]"
             echo ""
             echo "Options:"
-            echo "  --project DIR     Project directory with prd.json (default: current dir)"
+            echo "  --project DIR     Project directory with prp.json/prd.json (default: current dir)"
             echo "  --image IMAGE     Custom Docker image (default: ralph-agent:latest)"
             echo "  --agents N        Number of builder agents (default: 2)"
             echo "  --researcher N    Number of researcher agents (default: 0)"
@@ -160,16 +160,24 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 # Resolve to absolute path
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-PRD_FILE="$PROJECT_DIR/prd.json"
+# Prefer prp.json, fall back to prd.json
+if [ -f "$PROJECT_DIR/prp.json" ]; then
+    SPEC_FILE="$PROJECT_DIR/prp.json"
+elif [ -f "$PROJECT_DIR/prd.json" ]; then
+    SPEC_FILE="$PROJECT_DIR/prd.json"
+else
+    SPEC_FILE=""
+fi
 # CLAUDE-parallel.md lives in the ralph repo, not the project
 PARALLEL_PROMPT="$SCRIPT_DIR/CLAUDE-parallel.md"
 VERIFIER_PROMPT="$SCRIPT_DIR/CLAUDE-verifier.md"
 
-if [ ! -f "$PRD_FILE" ]; then
-    log_error "No prd.json found in $PROJECT_DIR"
-    log_error "Create a prd.json first (see prd.json.example)."
+if [ -z "$SPEC_FILE" ]; then
+    log_error "No prp.json or prd.json found in $PROJECT_DIR"
+    log_error "Create a prp.json first (see prp.json.example)."
     exit 1
 fi
+SPEC_BASENAME=$(basename "$SPEC_FILE")
 
 if [ ! -f "$PARALLEL_PROMPT" ]; then
     log_error "Missing parallel/CLAUDE-parallel.md prompt file"
@@ -187,14 +195,16 @@ if [ ! -d "$PROJECT_DIR/.git" ]; then
 fi
 
 # --- Display config ---
-PROJECT_NAME=$(jq -r '.project // "unknown"' "$PRD_FILE" 2>/dev/null || echo "unknown")
-BRANCH_NAME=$(jq -r '.branchName // empty' "$PRD_FILE" 2>/dev/null || echo "")
-TOTAL_STORIES=$(jq '.userStories | length' "$PRD_FILE" 2>/dev/null || echo "?")
-DONE_STORIES=$(jq '[.userStories[] | select(.passes == true)] | length' "$PRD_FILE" 2>/dev/null || echo "?")
+PROJECT_NAME=$(jq -r '.project // "unknown"' "$SPEC_FILE" 2>/dev/null || echo "unknown")
+BRANCH_NAME=$(jq -r '.branchName // empty' "$SPEC_FILE" 2>/dev/null || echo "")
+SPEC_VERSION=$(jq -r '.version // 1' "$SPEC_FILE" 2>/dev/null || echo "1")
+TOTAL_STORIES=$(jq '.userStories | length' "$SPEC_FILE" 2>/dev/null || echo "?")
+DONE_STORIES=$(jq '[.userStories[] | select(.passes == true)] | length' "$SPEC_FILE" 2>/dev/null || echo "?")
 
 log_info "Ralph Parallel Mode"
 log_info "===================="
-log_info "Project: $PROJECT_NAME"
+log_info "Project: $PROJECT_NAME (v$SPEC_VERSION)"
+log_info "Spec: $SPEC_BASENAME"
 log_info "Branch: ${BRANCH_NAME:-<not set>}"
 log_info "Stories: $DONE_STORIES/$TOTAL_STORIES complete"
 log_info "Agents: $NUM_BUILDERS builders, $NUM_RESEARCHERS researchers, $NUM_VERIFIERS verifiers ($TOTAL_AGENTS total)"
@@ -369,11 +379,22 @@ read_from_bare_repo() {
         || echo ""
 }
 
+# Helper: read spec from bare repo (try prp.json first, fall back to prd.json)
+read_spec_from_bare_repo() {
+    local branch="${1:-$BRANCH_NAME}"
+    local content
+    content=$(read_from_bare_repo "prp.json" "$branch")
+    if [ -z "$content" ]; then
+        content=$(read_from_bare_repo "prd.json" "$branch")
+    fi
+    echo "$content"
+}
+
 # Helper: check if all stories are complete in the bare repo
 # When verifiers are in use, requires passes AND verified for all stories.
 check_all_stories_complete() {
     local prd_content
-    prd_content=$(read_from_bare_repo "prd.json" "$BRANCH_NAME")
+    prd_content=$(read_spec_from_bare_repo "$BRANCH_NAME")
     [ -z "$prd_content" ] && return 1
 
     if [ "$NUM_VERIFIERS" -gt 0 ]; then
@@ -390,9 +411,9 @@ check_all_stories_complete() {
 }
 
 recover_stale_claims() {
-    # Read prd.json from the bare repo (agents push there, not to project dir)
+    # Read spec from the bare repo (agents push there, not to project dir)
     local prd_content
-    prd_content=$(read_from_bare_repo "prd.json" "$BRANCH_NAME")
+    prd_content=$(read_spec_from_bare_repo "$BRANCH_NAME")
     [ -z "$prd_content" ] && return
 
     local now_epoch
@@ -452,8 +473,11 @@ recover_stale_claims() {
         if [ -n "$BRANCH_NAME" ]; then
             git checkout "$BRANCH_NAME" 2>/dev/null || true
         fi
-        echo "$updated_prd" | jq '.' > prd.json
-        git add prd.json
+        # Write to whichever spec file exists in the checkout
+        local target_spec="prp.json"
+        [ -f "prd.json" ] && [ ! -f "prp.json" ] && target_spec="prd.json"
+        echo "$updated_prd" | jq '.' > "$target_spec"
+        git add "$target_spec"
         git commit -m "[orchestrator] Clear stale claims" 2>/dev/null || true
         git push origin 2>/dev/null || true
         cd - > /dev/null
@@ -465,7 +489,7 @@ recover_stale_verification_claims() {
     [ "$NUM_VERIFIERS" -eq 0 ] && return
 
     local prd_content
-    prd_content=$(read_from_bare_repo "prd.json" "$BRANCH_NAME")
+    prd_content=$(read_spec_from_bare_repo "$BRANCH_NAME")
     [ -z "$prd_content" ] && return
 
     local now_epoch
@@ -523,8 +547,11 @@ recover_stale_verification_claims() {
         if [ -n "$BRANCH_NAME" ]; then
             git checkout "$BRANCH_NAME" 2>/dev/null || true
         fi
-        echo "$updated_prd" | jq '.' > prd.json
-        git add prd.json
+        # Write to whichever spec file exists in the checkout
+        local target_spec="prp.json"
+        [ -f "prd.json" ] && [ ! -f "prp.json" ] && target_spec="prd.json"
+        echo "$updated_prd" | jq '.' > "$target_spec"
+        git add "$target_spec"
         git commit -m "[orchestrator] Clear stale verification claims" 2>/dev/null || true
         git push origin 2>/dev/null || true
         cd - > /dev/null
@@ -585,7 +612,7 @@ while true; do
 
     # Check if all stories are complete (read from bare repo)
     if check_all_stories_complete; then
-        log_info "All PRD stories are complete!"
+        log_info "All stories are complete!"
         log_info "Shutting down agents..."
         for name in "${CONTAINER_NAMES[@]}"; do
             stop_agent "$name" 15

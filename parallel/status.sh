@@ -23,7 +23,6 @@ if [ -z "$PROJECT_DIR" ]; then
     PROJECT_DIR="$(pwd)"
 fi
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-PRD_FILE="$PROJECT_DIR/prd.json"
 BARE_REPO="$PROJECT_DIR/.ralph/repo.git"
 
 # Helper: read file from bare repo
@@ -33,20 +32,36 @@ read_from_bare_repo() {
 }
 
 # Load project info — prefer bare repo (has latest agent pushes), fallback to working dir
+# Try prp.json first, then prd.json
 PROJECT_NAME="unknown"
+SPEC_VERSION="1"
+SPEC_BASENAME=""
 PRD_CONTENT=""
 if [ -d "$BARE_REPO" ]; then
-    PRD_CONTENT=$(read_from_bare_repo "prd.json")
+    PRD_CONTENT=$(read_from_bare_repo "prp.json")
+    [ -n "$PRD_CONTENT" ] && SPEC_BASENAME="prp.json"
+    if [ -z "$PRD_CONTENT" ]; then
+        PRD_CONTENT=$(read_from_bare_repo "prd.json")
+        [ -n "$PRD_CONTENT" ] && SPEC_BASENAME="prd.json"
+    fi
 fi
-if [ -z "$PRD_CONTENT" ] && [ -f "$PRD_FILE" ]; then
-    PRD_CONTENT=$(cat "$PRD_FILE")
+if [ -z "$PRD_CONTENT" ]; then
+    if [ -f "$PROJECT_DIR/prp.json" ]; then
+        PRD_CONTENT=$(cat "$PROJECT_DIR/prp.json")
+        SPEC_BASENAME="prp.json"
+    elif [ -f "$PROJECT_DIR/prd.json" ]; then
+        PRD_CONTENT=$(cat "$PROJECT_DIR/prd.json")
+        SPEC_BASENAME="prd.json"
+    fi
 fi
 if [ -n "$PRD_CONTENT" ]; then
     PROJECT_NAME=$(echo "$PRD_CONTENT" | jq -r '.project // "unknown"' 2>/dev/null || echo "unknown")
+    SPEC_VERSION=$(echo "$PRD_CONTENT" | jq -r '.version // 1' 2>/dev/null || echo "1")
 fi
 
 echo "========================================"
-echo " Ralph Parallel Status: $PROJECT_NAME"
+echo " Ralph Parallel Status: $PROJECT_NAME (v$SPEC_VERSION)"
+[ -n "$SPEC_BASENAME" ] && echo " Spec: $SPEC_BASENAME"
 echo "========================================"
 echo ""
 
