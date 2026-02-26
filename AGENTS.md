@@ -56,3 +56,21 @@ Ralph supports running multiple agents in parallel via Docker containers. See `p
 - Each agent writes to its own `progress-<agent-id>.txt` to avoid merge conflicts
 - Builder agents have restricted network access (Claude API + npm only)
 - Researcher agents have full internet access
+
+### Multi-PRP Mode
+
+`launch-multi-prp.sh` runs independent feature branches simultaneously (1 agent per PRP):
+
+- Each PRP file specifies its own `branchName`; the orchestrator pre-creates branches
+- `RALPH_BRANCH` env var tells each agent which branch to check out
+- No story contention — each agent has its own story pool
+- On completion, branches are fetched back and `gh pr create` commands are printed
+- Use `--prp FILE` (repeatable) to specify which PRPs to run
+
+### Lessons Learned
+
+- **macOS bash 3.x**: Don't use `declare -A` (associative arrays). Use indexed parallel arrays.
+- **Agent containers are independent**: The monitor loop crashing doesn't affect running agents.
+- **Foundation stories take longer**: Types + API client stories are slower than incremental tool stories.
+- **Token expiry planning**: All agents share one OAuth token. If it expires mid-run, agents that haven't finished enter a retry loop. Plan token validity for the full session.
+- **PRP independence**: When two PRPs need the same helper, inline it in both as separate stories with "skip if already exists" guidance.

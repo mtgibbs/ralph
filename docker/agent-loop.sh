@@ -25,6 +25,7 @@ AGENT_ID="${AGENT_ID:?AGENT_ID is required}"
 AGENT_ROLE="${AGENT_ROLE:?AGENT_ROLE is required}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-0}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-sonnet-4-5-20250929}"
+RALPH_BRANCH="${RALPH_BRANCH:-}"
 
 REPO_PATH="/repo.git"
 WORKSPACE="/workspace"
@@ -107,6 +108,26 @@ setup_git_identity() {
 
 # --- Step 5: Check out the correct branch from spec file ---
 checkout_prd_branch() {
+    # RALPH_BRANCH override: if set, skip spec file discovery and use directly
+    if [ -n "$RALPH_BRANCH" ]; then
+        echo "[$AGENT_ID] RALPH_BRANCH override: $RALPH_BRANCH"
+        local current_branch
+        current_branch=$(git branch --show-current 2>/dev/null || echo "")
+        if [ "$current_branch" = "$RALPH_BRANCH" ]; then
+            echo "[$AGENT_ID] Already on branch: $RALPH_BRANCH"
+            return 0
+        fi
+        echo "[$AGENT_ID] Checking out branch: $RALPH_BRANCH"
+        if git show-ref --verify --quiet "refs/heads/$RALPH_BRANCH" 2>/dev/null; then
+            git checkout "$RALPH_BRANCH"
+        elif git show-ref --verify --quiet "refs/remotes/origin/$RALPH_BRANCH" 2>/dev/null; then
+            git checkout -b "$RALPH_BRANCH" "origin/$RALPH_BRANCH"
+        else
+            git checkout -b "$RALPH_BRANCH"
+        fi
+        return 0
+    fi
+
     local spec_file
     spec_file=$(detect_spec_file "$WORKSPACE")
 

@@ -172,6 +172,92 @@ USER agent
 2. `Dockerfile.ralph` in the project directory — auto-built
 3. Default `ralph-agent:latest` — base image with Node.js only
 
+## Multi-PRP Mode
+
+Multi-PRP mode runs independent feature branches simultaneously. Instead of N agents sharing one PRD, each PRP gets its own branch and dedicated agent. Use this when you have multiple independent features to build in parallel.
+
+### How It Works
+
+1. **Branch setup**: The orchestrator reads `branchName` from each PRP JSON file, creates a feature branch per PRP in the bare repo, and commits the PRP file to its branch
+2. **Targeted launch**: Each container receives a `RALPH_BRANCH` env var telling it which branch to check out, bypassing the normal prp.json branch discovery
+3. **Independent execution**: Agents work on their own branch with no cross-branch coordination or story contention
+4. **Completion tracking**: The monitor loop checks each branch independently; when all branches report all stories passing, it fetches branches back and prints `gh pr create` commands
+
+### Quick Start (Multi-PRP)
+
+```bash
+./parallel/launch-multi-prp.sh \
+  --project /path/to/repo \
+  --prp prps/feature-a.json \
+  --prp prps/feature-b.json \
+  --prp prps/feature-c.json \
+  --model claude-sonnet-4-5-20250929
+```
+
+### CLI Options (Multi-PRP)
+
+```
+./parallel/launch-multi-prp.sh [options]
+
+Required:
+  --project DIR         Project git repository
+  --prp FILE            PRP JSON file, relative to project dir (repeatable)
+
+Options:
+  --model MODEL         Claude model (default: claude-sonnet-4-5-20250929)
+  --memory SIZE         Per-container memory limit (default: 4g)
+  --cpus N              Per-container CPU limit (default: 2)
+  --max-iterations N    Per-agent iteration cap (default: 0 = until done)
+  --allow-domain D      Extra domain to whitelist in firewall (repeatable)
+```
+
+### PRP File Requirements
+
+Each PRP JSON file must include:
+- `branchName`: Feature branch name (e.g., `"ralph/prd-03-summarization"`)
+- `userStories`: Array of stories with `id`, `passes`, `dependsOn`, etc.
+- `project`: Project identifier (used for logging)
+
+### RALPH_BRANCH Override
+
+The `RALPH_BRANCH` env var is the key mechanism. When set in a container:
+- `agent-loop.sh` skips its normal spec-file-based branch discovery
+- Goes directly to the specified branch (checkout or create from remote)
+- Backward compatible: empty string falls through to existing behavior
+
+This is passed as the 10th parameter to `launch_agent()` in `docker-helpers.sh`.
+
+### PRP Independence Pattern
+
+When multiple PRPs share helper code (e.g., the same utility function), each PRP should include the helper creation as its own story with a note like "skip if file already exists from another branch merge." This makes PRPs fully independent — each agent can complete its work without depending on another branch being merged first.
+
+### Differences from Single-PRP Mode
+
+| | `ralph-parallel.sh` | `launch-multi-prp.sh` |
+|---|---|---|
+| Branches | One shared branch | One branch per PRP |
+| Agents | N agents compete for stories | 1 agent per PRP, no competition |
+| Use case | Parallelize within a feature | Parallelize across features |
+| Completion | All stories in one PRP done | All branches done independently |
+| Output | Stories marked `passes: true` | Branches synced + PR commands |
+| Agent targeting | Branch from prp.json | `RALPH_BRANCH` env var override |
+
+### Resource Planning
+
+Each container uses the configured memory and CPU limits. For N PRPs:
+- Memory: N × `--memory` (e.g., 6 PRPs × 4GB = 24GB)
+- CPUs: N × `--cpus` (e.g., 6 PRPs × 2 = 12 CPUs)
+- Token budget: all agents share one OAuth token; plan for the total session duration
+
+### Monitoring
+
+The monitor loop runs every 30 seconds and:
+- Checks each branch independently for story completion
+- Recovers stale claims on incomplete branches
+- Detects auth failures (exit code 2) and halts all agents
+- Restarts crashed containers for incomplete branches
+- Prints PR creation commands when all branches complete
+
 ## File Layout
 
 ```
@@ -182,7 +268,8 @@ docker/
 └── init-firewall-researcher.sh     # No-op (full internet)
 
 parallel/
-├── ralph-parallel.sh               # Host orchestrator: launch, monitor, restart
+├── ralph-parallel.sh               # Single-PRP: N agents, one branch
+├── launch-multi-prp.sh             # Multi-PRP: 1 agent per branch
 ├── stop.sh                         # Graceful shutdown
 ├── status.sh                       # Container status + story board + logs
 ├── CLAUDE-parallel.md              # Parallel-aware prompt for agents
@@ -190,7 +277,7 @@ parallel/
 └── lib/
     ├── auth.sh                     # Token retrieval: env > file > 1Password
     ├── network-setup.sh            # Docker network create/teardown
-    ├── docker-helpers.sh           # Container launch/stop/restart
+    ├── docker-helpers.sh           # Container launch/stop/restart (10-param)
     └── logging.sh                  # Timestamped log helpers
 ```
 

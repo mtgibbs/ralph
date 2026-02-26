@@ -55,6 +55,7 @@ launch_agent() {
     local container_cpus="${7:-2}"
     local git_author_name="${8:-}"
     local git_author_email="${9:-}"
+    local ralph_branch="${10:-}"
 
     # Determine network based on role (verifiers use builder network — no internet needed)
     local network
@@ -100,6 +101,7 @@ launch_agent() {
         -e "GIT_AUTHOR_NAME_OVERRIDE=${git_author_name}" \
         -e "GIT_AUTHOR_EMAIL_OVERRIDE=${git_author_email}" \
         -e "RALPH_EXTRA_DOMAINS=${RALPH_EXTRA_DOMAINS:-}" \
+        -e "RALPH_BRANCH=${ralph_branch}" \
         -v "$CLAUDE_AUTH_VOLUME:/claude-auth:ro" \
         -v "$project_dir_abs/.ralph/repo.git:/repo.git:rw" \
         -v "$prompt_path:/parallel-prompt/CLAUDE-parallel.md:ro" \

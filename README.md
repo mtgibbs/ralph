@@ -286,6 +286,58 @@ Priority order (first wins):
 
 See [parallel/README.md](parallel/README.md) for full documentation.
 
+## Multi-PRP Mode (Docker)
+
+Multi-PRP mode extends parallel mode for running **independent feature branches simultaneously**. Instead of N agents competing for stories on one PRD, each PRP file gets its own feature branch and dedicated agent. This is ideal for batching multiple independent features in a single launch.
+
+### How It Works
+
+1. You provide multiple PRP JSON files, each with its own `branchName`
+2. The orchestrator pre-creates a feature branch per PRP in the bare repo
+3. One container launches per PRP, targeted to its branch via `RALPH_BRANCH`
+4. Agents work independently — no competition, no cross-branch coordination
+5. On completion, branches are fetched back and PR creation commands are printed
+
+### Quick Start (Multi-PRP)
+
+```bash
+# Launch 6 agents, one per PRP file
+./parallel/launch-multi-prp.sh \
+  --project /path/to/my-repo \
+  --prp prps/prp-03.json \
+  --prp prps/prp-04.json \
+  --prp prps/prp-05.json \
+  --prp prps/prp-06.json \
+  --prp prps/prp-07.json \
+  --model claude-sonnet-4-5-20250929
+```
+
+### Options (Multi-PRP)
+
+```bash
+./parallel/launch-multi-prp.sh \
+  --project DIR \          # project git repo (required)
+  --prp FILE \             # PRP JSON file, relative to project (repeatable, required)
+  --model MODEL \          # Claude model (default: claude-sonnet-4-5-20250929)
+  --memory SIZE \          # per-container memory (default: 4g)
+  --cpus N \               # per-container CPUs (default: 2)
+  --max-iterations N \     # per-agent iteration cap (default: 0 = until done)
+  --allow-domain DOMAIN    # extra firewall whitelist (repeatable)
+```
+
+### Single-PRP vs Multi-PRP
+
+| | `ralph-parallel.sh` | `launch-multi-prp.sh` |
+|---|---|---|
+| Branches | One shared branch | One branch per PRP |
+| Agents | N agents compete for stories | 1 agent per PRP, no competition |
+| Use case | Parallelize within a feature | Parallelize across features |
+| Story claiming | Git atomic push (contention possible) | No contention (isolated branches) |
+| Completion | All stories done → exit | All branches done → exit |
+| Output | Stories marked `passes: true` | Branches synced + PR commands printed |
+
+See [parallel/README.md](parallel/README.md) for full documentation.
+
 ## References
 
 - [Geoffrey Huntley's Ralph article](https://ghuntley.com/ralph/)
